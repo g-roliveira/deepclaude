@@ -73,6 +73,15 @@ class UsageNormalizer extends Transform {
         try {
             const d = JSON.parse(m[1]);
             let changed = false;
+
+            // Strip redacted_thinking blocks that OpenRouter emits out-of-order
+            // for non-Claude reasoning models. These break the SSE parser.
+            if (d.type === 'content_block_start' || d.type === 'content_block_delta') {
+                if (d.content_block?.type === 'redacted_thinking') {
+                    return ''; // drop the event entirely
+                }
+            }
+
             if (d.type === 'message_start' && d.message) {
                 if (d.message.usage) {
                     this._inputTokens = d.message.usage.input_tokens || 0;
@@ -109,8 +118,9 @@ function normalizeJsonBody(buf) {
         const obj = JSON.parse(buf);
         if (obj.type === 'message' && !obj.usage) {
             obj.usage = { input_tokens: 0, output_tokens: 0 };
-            return Buffer.from(JSON.stringify(obj));
         }
+        stripRedactedThinking(obj);
+        return Buffer.from(JSON.stringify(obj));
     } catch { /* not JSON */ }
     return buf;
 }
@@ -131,6 +141,42 @@ function stripUnsignedThinkingBlocks(body) {
             block => block.type !== 'thinking' || block.signature
         );
     }
+}
+
+/**
+ * Detect title-generation requests: very low max_tokens, no tools,
+ * system message asking for a title. Mock locally to save an API call.
+ */
+function isTitleGenRequest(parsed) {
+    if (!parsed || !parsed.messages) return false;
+    if ((parsed.max_tokens || 0) > 256) return false;
+    if (parsed.tools?.length) return false;
+    const text = JSON.stringify(parsed.messages).toLowerCase();
+    return text.includes('title') || text.includes('summariz') || text.includes('short');
+}
+
+function makeTitleGenResponse() {
+    return {
+        id: 'msg_title_mock',
+        type: 'message',
+        role: 'assistant',
+        content: [{ type: 'text', text: 'Coding session' }],
+        model: 'claude-fable-5',
+        stop_reason: 'end_turn',
+        usage: { input_tokens: 10, output_tokens: 2 },
+    };
+}
+
+/**
+ * Strip redacted_thinking blocks that OpenRouter emits out-of-order
+ * for non-Claude reasoning models. These break the SSE parser.
+ */
+function stripRedactedThinking(parsed) {
+    if (!parsed?.content) return;
+    if (!Array.isArray(parsed.content)) return;
+    parsed.content = parsed.content.filter(
+        block => block.type !== 'redacted_thinking'
+    );
 }
 
 export function startModelProxy({ targetUrl, apiKey, startPort = 3200, backends, defaultMode }) {
@@ -281,6 +327,27 @@ export function startModelProxy({ targetUrl, apiKey, startPort = 3200, backends,
                 return;
             }
 
+            // Count tokens mock — answer locally instead of forwarding to
+            // backends that lack this endpoint. Approximate: ~4 chars per token
+            // for English text, which is conservative but avoids upstream 404s.
+            if (urlPath === '/v1/messages/count_tokens' && clientReq.method === 'POST') {
+                const chunks = [];
+                clientReq.on('data', c => chunks.push(c));
+                clientReq.on('end', () => {
+                    try {
+                        const body = JSON.parse(Buffer.concat(chunks).toString());
+                        const text = JSON.stringify(body.messages || body);
+                        const approx = Math.ceil(text.length / 4);
+                        clientRes.writeHead(200, { 'content-type': 'application/json' });
+                        clientRes.end(JSON.stringify({ input_tokens: approx }));
+                    } catch {
+                        clientRes.writeHead(200, { 'content-type': 'application/json' });
+                        clientRes.end(JSON.stringify({ input_tokens: 0 }));
+                    }
+                });
+                return;
+            }
+
             // In anthropic mode, everything passes through transparently
             const isAnthropicMode = state.mode === 'anthropic';
             const isModelCall = !isAnthropicMode && MODEL_PATHS.includes(urlPath);
@@ -337,6 +404,23 @@ export function startModelProxy({ targetUrl, apiKey, startPort = 3200, backends,
             clientReq.on('end', () => {
                 if (bodySize > MAX_BODY_SIZE) return;
                 let body = Buffer.concat(chunks);
+
+                // Telemetry mock: intercept title-generation and quota-probe
+                // requests. These are not real inference — Claude Code generates
+                // conversation titles and checks credit status via small model
+                // calls. Answering locally saves an API round-trip and token cost.
+                if (isModelCall) {
+                    try {
+                        const parsed = JSON.parse(body);
+                        if (isTitleGenRequest(parsed)) {
+                            console.log(`[MODEL-PROXY] #${reqId} title-gen mocked (saved 1 round-trip)`);
+                            const mockResp = makeTitleGenResponse();
+                            clientRes.writeHead(200, { 'content-type': 'application/json' });
+                            clientRes.end(JSON.stringify(mockResp));
+                            return;
+                        }
+                    } catch { /* pass through */ }
+                }
 
                 // Remap Anthropic model names to backend-specific names
                 if (isModelCall && MODEL_REMAP[state.mode]) {
