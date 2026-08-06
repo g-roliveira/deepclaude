@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # deepclaude — Use Claude Code with DeepSeek V4 Pro or other cheap backends
-# Usage: deepclaude [--backend ds|or|fw|anthropic] [--remote] [--status] [--cost] [--benchmark]
+# Usage: deepclaude [--backend ds|or|fw|anthropic] [--remote] [--effort level] [--status] [--cost] [--benchmark]
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 
 # --- Config ---
 DEEPSEEK_URL="https://api.deepseek.com/anthropic"
@@ -14,6 +14,7 @@ FIREWORKS_URL="https://api.fireworks.ai/inference"
 BACKEND="${CHEAPCLAUDE_DEFAULT_BACKEND:-ds}"
 ACTION="launch"
 SWITCH_BACKEND=""
+EFFORT_LEVEL=""
 PROXY_PID=""
 
 # --- Parse args ---
@@ -21,6 +22,7 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --backend|-b) BACKEND="$2"; shift 2 ;;
         --switch|-s)  ACTION="switch"; SWITCH_BACKEND="$2"; shift 2 ;;
+        --effort)     EFFORT_LEVEL="$2"; shift 2 ;;
         --remote|-r)  ACTION="remote"; shift ;;
         --status)     ACTION="status"; shift ;;
         --cost)       ACTION="cost"; shift ;;
@@ -83,7 +85,9 @@ set_model_env() {
     export ANTHROPIC_DEFAULT_SONNET_MODEL="$RESOLVED_SONNET"
     export ANTHROPIC_DEFAULT_HAIKU_MODEL="$RESOLVED_HAIKU"
     export CLAUDE_CODE_SUBAGENT_MODEL="$RESOLVED_SUBAGENT"
-    export CLAUDE_CODE_EFFORT_LEVEL="max"
+    if [[ -n "$EFFORT_LEVEL" ]]; then
+        export CLAUDE_CODE_EFFORT_LEVEL="$EFFORT_LEVEL"
+    fi
 }
 
 show_status() {
@@ -143,6 +147,7 @@ show_help() {
     echo "  --cost                               Pricing comparison"
     echo "  --benchmark                          Latency test"
     echo "  -s, --switch <backend>               Switch proxy mid-session"
+    echo "  --effort <level>                      Reasoning effort: low|medium|high|xhigh|max|auto"
     echo "  -h, --help                           This help"
     echo ""
     echo "Environment variables:"

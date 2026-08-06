@@ -389,7 +389,7 @@ export function startModelProxy({ targetUrl, apiKey, startPort = 3200, backends,
                             clientRes.end(JSON.stringify(result));
                             return;
                         }
-                        console.log(`[MODEL-PROXY] Mode switched: ${result.previous} → ${result.mode}`);
+                        console.error(`[MODEL-PROXY] Mode switched: ${result.previous} → ${result.mode}`);
                         clientRes.writeHead(200, { 'content-type': 'application/json' });
                         clientRes.end(JSON.stringify(result));
                     });
@@ -484,7 +484,7 @@ export function startModelProxy({ targetUrl, apiKey, startPort = 3200, backends,
                         // Route image to OpenRouter with a vision-capable model
                         const orKey = process.env.OPENROUTER_API_KEY;
                         if (!orKey) {
-                            console.log(`[MODEL-PROXY] #${reqId} image fallback: OPENROUTER_API_KEY not set, using Anthropic`);
+                            console.error(`[MODEL-PROXY] #${reqId} image fallback: OPENROUTER_API_KEY not set, using Anthropic`);
                             dest = new URL(ANTHROPIC_FALLBACK);
                             headers = { ...clientReq.headers, host: dest.host };
                             delete headers['content-length'];
@@ -527,7 +527,7 @@ export function startModelProxy({ targetUrl, apiKey, startPort = 3200, backends,
 
                     body = Buffer.from(JSON.stringify(parsed));
                     fullPath = '/v1/messages';
-                    console.log(`[MODEL-PROXY] #${reqId} [image→${effectiveMode}${imageRewrite ? `, ${imageRewrite.backend}→${imageRewrite.canonical}` : ''}]`);
+                    console.error(`[MODEL-PROXY] #${reqId} [image→${effectiveMode}${imageRewrite ? `, ${imageRewrite.backend}→${imageRewrite.canonical}` : ''}]`);
                 } else {
                     // Normal routing
                     dest = isModelCall ? state.target : new URL(ANTHROPIC_FALLBACK);
@@ -564,7 +564,7 @@ export function startModelProxy({ targetUrl, apiKey, startPort = 3200, backends,
                     if (isModelCall && parsed?.['messages']) {
                         const stripped = stripImagesFromMessages(parsed.messages);
                         if (stripped > 0) {
-                            console.log(`[MODEL-PROXY] #${reqId} stripped ${stripped} stale image(s) from history`);
+                            console.error(`[MODEL-PROXY] #${reqId} stripped ${stripped} stale image(s) from history`);
                             body = Buffer.from(JSON.stringify(parsed));
                         }
                     }
@@ -572,7 +572,7 @@ export function startModelProxy({ targetUrl, apiKey, startPort = 3200, backends,
 
                 const trackUsage = isModelCall || hasImage;
                 if (trackUsage) {
-                    console.log(`[MODEL-PROXY] #${reqId} → ${dest.hostname}${fullPath}`);
+                    console.error(`[MODEL-PROXY] #${reqId} → ${dest.hostname}${fullPath}`);
                 }
 
                 // Telemetry mock: intercept title-generation
@@ -580,7 +580,7 @@ export function startModelProxy({ targetUrl, apiKey, startPort = 3200, backends,
                     try {
                         const p = JSON.parse(body);
                         if (isTitleGenRequest(p)) {
-                            console.log(`[MODEL-PROXY] #${reqId} title-gen mocked (saved 1 round-trip)`);
+                            console.error(`[MODEL-PROXY] #${reqId} title-gen mocked (saved 1 round-trip)`);
                             const mockResp = makeTitleGenResponse();
                             clientRes.writeHead(200, { 'content-type': 'application/json' });
                             clientRes.end(JSON.stringify(mockResp));
@@ -603,12 +603,12 @@ export function startModelProxy({ targetUrl, apiKey, startPort = 3200, backends,
                                 : null;
                             if (remap._default && tier) {
                                 mapped = remap._default[tier];
-                                console.log(`[MODEL-PROXY] #${reqId} model fallback: ${p.model} → ${mapped} (tier=${tier})`);
+                                console.error(`[MODEL-PROXY] #${reqId} model fallback: ${p.model} → ${mapped} (tier=${tier})`);
                             } else {
-                                console.log(`[MODEL-PROXY] #${reqId} WARNING: unmapped model ${p.model} forwarded raw`);
+                                console.error(`[MODEL-PROXY] #${reqId} WARNING: unmapped model ${p.model} forwarded raw`);
                             }
                         } else {
-                            console.log(`[MODEL-PROXY] #${reqId} model remap: ${p.model} → ${mapped}`);
+                            console.error(`[MODEL-PROXY] #${reqId} model remap: ${p.model} → ${mapped}`);
                         }
                         if (mapped) {
                             p.model = mapped;
@@ -658,7 +658,7 @@ export function startModelProxy({ targetUrl, apiKey, startPort = 3200, backends,
                 const proxyReq = httpsRequest(opts, (proxyRes) => {
                     if (trackUsage) {
                         const ttfb = Date.now() - t0;
-                        console.log(`[MODEL-PROXY] #${reqId} TTFB ${ttfb}ms (status ${proxyRes.statusCode})`);
+                        console.error(`[MODEL-PROXY] #${reqId} TTFB ${ttfb}ms (status ${proxyRes.statusCode})`);
                     }
 
                     const ct = proxyRes.headers['content-type'] || '';
@@ -694,7 +694,7 @@ export function startModelProxy({ targetUrl, apiKey, startPort = 3200, backends,
                         );
                         proxyRes.pipe(norm).pipe(clientRes);
                         proxyRes.on('end', () => {
-                            console.log(`[MODEL-PROXY] #${reqId} done in ${((Date.now() - t0) / 1000).toFixed(1)}s (${norm._inputTokens}in/${norm._outputTokens}out)`);
+                            console.error(`[MODEL-PROXY] #${reqId} done in ${((Date.now() - t0) / 1000).toFixed(1)}s (${norm._inputTokens}in/${norm._outputTokens}out)`);
                         });
                     } else if (trackUsage && ct.includes('application/json')) {
                         const respChunks = [];
@@ -716,7 +716,7 @@ export function startModelProxy({ targetUrl, apiKey, startPort = 3200, backends,
                             const outHeaders = { ...jsonHeaders, 'content-length': fixed.length };
                             clientRes.writeHead(proxyRes.statusCode, outHeaders);
                             clientRes.end(fixed);
-                            console.log(`[MODEL-PROXY] #${reqId} done in ${((Date.now() - t0) / 1000).toFixed(1)}s (json, ${fixed.length}b)`);
+                            console.error(`[MODEL-PROXY] #${reqId} done in ${((Date.now() - t0) / 1000).toFixed(1)}s (json, ${fixed.length}b)`);
                         });
                     } else {
                         // Non-model or unknown content-type: pass through
@@ -724,7 +724,7 @@ export function startModelProxy({ targetUrl, apiKey, startPort = 3200, backends,
                         proxyRes.pipe(clientRes);
                         if (trackUsage) {
                             proxyRes.on('end', () => {
-                                console.log(`[MODEL-PROXY] #${reqId} done in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
+                                console.error(`[MODEL-PROXY] #${reqId} done in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
                             });
                         }
                     }
@@ -764,7 +764,7 @@ export function startModelProxy({ targetUrl, apiKey, startPort = 3200, backends,
             });
             server.listen(port, '127.0.0.1', () => {
                 const actualPort = server.address().port;
-                console.log(`[MODEL-PROXY] Listening on 127.0.0.1:${actualPort} → ${targetUrl} (mode: ${state.mode})`);
+                console.error(`[MODEL-PROXY] Listening on 127.0.0.1:${actualPort} → ${targetUrl} (mode: ${state.mode})`);
                 resolve({ port: actualPort, close: () => server.close(), switchMode });
             });
         }

@@ -22,6 +22,7 @@ param(
     [string]$Switch,
     [Alias("r")]
     [switch]$Remote,
+    [string]$Effort,
     [switch]$Status,
     [switch]$Cost,
     [switch]$Benchmark,
@@ -116,10 +117,11 @@ if ($Cost) {
 if ($Help) {
     Write-Host "deepclaude - Claude Code with cheap backends"
     Write-Host ""
-    Write-Host "Usage: deepclaude [-b backend] [-s backend] [--status] [--cost] [--benchmark]"
+    Write-Host "Usage: deepclaude [-b backend] [-s backend] [--effort level] [--status] [--cost] [--benchmark]"
     Write-Host ""
     Write-Host "  -b, --backend   ds (default), or, fw, anthropic"
     Write-Host "  -s, --switch    Switch proxy mid-session (ds, or, fw, anthropic)"
+    Write-Host "  --effort        Reasoning effort: low, medium, high, xhigh, max, auto"
     Write-Host "  --status        Show keys and backends"
     Write-Host "  --cost          Pricing comparison"
     Write-Host "  --benchmark     Latency test"
@@ -201,7 +203,7 @@ if ($Remote) {
     Write-Host "`n  Starting model proxy for $($p.name)..." -ForegroundColor Cyan
 
     $proxyScript = Join-Path $ScriptDir "proxy\start-proxy.js"
-    $proxyProc = Start-Process -FilePath "node" -ArgumentList $proxyScript,$p.url,$p.key -PassThru -WindowStyle Hidden -RedirectStandardOutput "$env:TEMP\deepclaude-proxy-port.txt"
+    $proxyProc = Start-Process -FilePath "node" -ArgumentList $proxyScript,$p.url,$p.key,$Backend -PassThru -WindowStyle Hidden -RedirectStandardOutput "$env:TEMP\deepclaude-proxy-port.txt"
 
     $tries = 0
     while ($tries -lt 30) {
@@ -230,7 +232,7 @@ if ($Remote) {
     $env:ANTHROPIC_DEFAULT_SONNET_MODEL = $p.sonnet
     $env:ANTHROPIC_DEFAULT_HAIKU_MODEL = $p.haiku
     $env:CLAUDE_CODE_SUBAGENT_MODEL = $p.subagent
-    $env:CLAUDE_CODE_EFFORT_LEVEL = "max"
+    if ($Effort) { $env:CLAUDE_CODE_EFFORT_LEVEL = $Effort }
     Remove-Item Env:ANTHROPIC_API_KEY -ErrorAction SilentlyContinue
     Remove-Item Env:ANTHROPIC_AUTH_TOKEN -ErrorAction SilentlyContinue
 
@@ -269,7 +271,7 @@ Write-Host "  Model: $($p.opus) (main) + $($p.haiku) (subagents)" -ForegroundCol
 Write-Host ""
 
 $proxyScript = Join-Path $ScriptDir "proxy\start-proxy.js"
-$proxyProc = Start-Process -FilePath "node" -ArgumentList $proxyScript,$p.url,$p.key -PassThru -WindowStyle Hidden -RedirectStandardOutput "$env:TEMP\deepclaude-proxy-port.txt"
+$proxyProc = Start-Process -FilePath "node" -ArgumentList $proxyScript,$p.url,$p.key,$Backend -PassThru -WindowStyle Hidden -RedirectStandardOutput "$env:TEMP\deepclaude-proxy-port.txt"
 
 $tries = 0
 while ($tries -lt 30) {
@@ -303,7 +305,7 @@ $env:ANTHROPIC_DEFAULT_OPUS_MODEL = $p.opus
 $env:ANTHROPIC_DEFAULT_SONNET_MODEL = $p.sonnet
 $env:ANTHROPIC_DEFAULT_HAIKU_MODEL = $p.haiku
 $env:CLAUDE_CODE_SUBAGENT_MODEL = $p.subagent
-$env:CLAUDE_CODE_EFFORT_LEVEL = "max"
+if ($Effort) { $env:CLAUDE_CODE_EFFORT_LEVEL = $Effort }
 Remove-Item Env:ANTHROPIC_AUTH_TOKEN -ErrorAction SilentlyContinue
 
 try {
