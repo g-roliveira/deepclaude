@@ -14,10 +14,15 @@ const REQUEST_TIMEOUT_MS = 5 * 60 * 1000; // 5 min per request
 // DEEPCLAUDE_IMAGE_FALLBACK:
 //   anthropic (default) — uses existing Claude Code auth (Max subscription)
 //   openrouter — uses OPENROUTER_API_KEY + DEEPCLAUDE_IMAGE_MODEL
+//   gemini — uses DEEPCLAUDE_GEMINI_API_KEY + DEEPCLAUDE_GEMINI_MODEL
+//            direct Google AI Studio (fastest, free tier)
 //   off — disables fallback
 const IMAGE_FALLBACK = process.env.DEEPCLAUDE_IMAGE_FALLBACK || 'anthropic';
 const IMAGE_FALLBACK_ENABLED = IMAGE_FALLBACK !== 'off';
 const IMAGE_FALLBACK_MODEL = process.env.DEEPCLAUDE_IMAGE_MODEL || 'google/gemini-2.5-flash';
+const GEMINI_MODEL = process.env.DEEPCLAUDE_GEMINI_MODEL || 'gemini-2.5-flash';
+const GEMINI_API_KEY = process.env.DEEPCLAUDE_GEMINI_API_KEY || '';
+const GEMINI_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta/models';
 
 const MODEL_REMAP = {
     deepseek: {
@@ -64,6 +69,7 @@ const PRICING_PER_M = {
     fireworks:      { input: 1.74,  output: 3.48 },
     anthropic:      { input: 3.00,  output: 15.00 },
     anthropic_max:  { input: 0,     output: 0 },     // Max subscription quota
+    gemini:         { input: 0,     output: 0 },     // Google AI Studio free tier
     image_fallback: { input: 0.15,  output: 0.60 },   // Gemini Flash via OpenRouter
     _single:        { input: 0.44,  output: 0.87 },
 };
@@ -256,6 +262,116 @@ function stripImagesFromMessages(messages) {
     }
     return count;
 }
+
+// --- Gemini direct vision fallback ---
+// Translates the latest user turn to Gemini API format, sends it,
+// and translates the response back to Anthropic format so Claude Code
+// sees a normal assistant reply.
+
+function anthropicToGemini(parsed) {
+    const sysText = Array.isArray(parsed.system)
+        ? parsed.system.map(s => s.text || s.content || '').filter(Boolean).join('\n\n')
+        : (typeof parsed.system === 'string' ? parsed.system : '');
+
+    const contents = [];
+    for (const msg of parsed.messages || []) {
+        const role = msg.role === 'assistant' ? 'model' : 'user';
+        const parts = [];
+        const content = Array.isArray(msg.content) ? msg.content : [msg.content];
+        for (const block of content) {
+            if (!block) continue;
+            if (block.type === 'text') {
+                parts.push({ text: block.text || '' });
+            } else if (block.type === 'image') {
+                const src = block.source || block.image_url || {};
+                const b64 = src.data || '';
+                const mime = src.media_type || src.format || 'image/png';
+                parts.push({ inline_data: { mime_type: mime, data: b64 } });
+            } else if (block.type === 'tool_result') {
+                const inner = Array.isArray(block.content) ? block.content : [block.content];
+                let txt = '';
+                for (const b of inner) {
+                    if (b && b.type === 'text') txt += (txt ? '\n' : '') + (b.text || '');
+                }
+                parts.push({ text: txt || '[tool result]' });
+            } else if (block.type === 'tool_use') {
+                parts.push({ text: JSON.stringify({ tool: block.name, id: block.id, input: block.input }) });
+            } else if (typeof block === 'string') {
+                parts.push({ text: block });
+            }
+        }
+        if (parts.length) contents.push({ role, parts });
+    }
+
+    const generationConfig = { max_output_tokens: parsed.max_tokens || 4096 };
+    if (parsed.temperature != null) generationConfig.temperature = parsed.temperature;
+
+    const geminiReq = { contents, generationConfig };
+    if (sysText) geminiReq.system_instruction = { parts: [{ text: sysText }] };
+
+    return geminiReq;
+}
+
+function geminiToAnthropic(geminiResp, originalModel) {
+    const candidate = geminiResp.candidates?.[0];
+    const text = candidate?.content?.parts?.map(p => p.text || '').join('') || '';
+    const finishReason = candidate?.finish_reason;
+    const stopReason = finishReason === 'STOP' ? 'end_turn'
+        : finishReason === 'MAX_TOKENS' ? 'max_tokens'
+        : finishReason === 'SAFETY' ? 'end_turn'
+        : 'end_turn';
+
+    const usageMeta = geminiResp.usage_metadata || {};
+    return {
+        id: 'msg_gemini_' + Date.now(),
+        type: 'message',
+        role: 'assistant',
+        model: originalModel || GEMINI_MODEL,
+        content: [{ type: 'text', text }],
+        stop_reason: stopReason,
+        stop_sequence: null,
+        usage: {
+            input_tokens: usageMeta.prompt_token_count || 0,
+            output_tokens: usageMeta.candidates_token_count || 0,
+        },
+    };
+}
+
+function sendGeminiRequest(geminiReq, callback) {
+    const url = `${GEMINI_BASE_URL}/${GEMINI_MODEL}:generateContent`;
+    const parsedUrl = new URL(url);
+    const body = JSON.stringify(geminiReq);
+
+    const opts = {
+        hostname: parsedUrl.hostname,
+        port: 443,
+        path: parsedUrl.pathname,
+        method: 'POST',
+        headers: {
+            'content-type': 'application/json',
+            'x-goog-api-key': GEMINI_API_KEY,
+            'content-length': Buffer.byteLength(body),
+        },
+    };
+
+    const req = httpsRequest(opts, (res) => {
+        let data = '';
+        res.on('data', c => data += c);
+        res.on('end', () => {
+            try {
+                const parsed = JSON.parse(data);
+                callback(null, parsed, res.statusCode);
+            } catch (e) {
+                callback(e, null, res.statusCode);
+            }
+        });
+    });
+    req.on('error', (e) => callback(e));
+    req.write(body);
+    req.end();
+}
+
+// ---
 
 export function startModelProxy({ targetUrl, apiKey, startPort = 3200, backends, defaultMode }) {
     return new Promise((resolve, reject) => {
@@ -501,6 +617,41 @@ export function startModelProxy({ targetUrl, apiKey, startPort = 3200, backends,
                                 parsed.model = IMAGE_FALLBACK_MODEL;
                             }
                             effectiveMode = 'image_fallback';
+                        }
+                    } else if (IMAGE_FALLBACK === 'gemini') {
+                        // Route image to Gemini directly via Google AI Studio
+                        if (!GEMINI_API_KEY) {
+                            console.error(`[MODEL-PROXY] #${reqId} image fallback: GEMINI_API_KEY not set, using Anthropic`);
+                            dest = new URL(ANTHROPIC_FALLBACK);
+                            headers = { ...clientReq.headers, host: dest.host };
+                            delete headers['content-length'];
+                            effectiveMode = 'anthropic_max';
+                        } else {
+                            console.error(`[MODEL-PROXY] #${reqId} [image→gemini ${GEMINI_MODEL}]`);
+                            const geminiReq = anthropicToGemini(parsed);
+                            sendGeminiRequest(geminiReq, (err, geminiResp, status) => {
+                                if (err) {
+                                    console.error(`[MODEL-PROXY] #${reqId} Gemini error:`, err.message);
+                                    clientRes.writeHead(502, { 'content-type': 'application/json' });
+                                    clientRes.end(JSON.stringify({ error: { message: 'Gemini vision request failed: ' + err.message } }));
+                                    return;
+                                }
+                                if (status !== 200 || !geminiResp?.candidates?.length) {
+                                    const errText = geminiResp?.error?.message || `HTTP ${status}`;
+                                    console.error(`[MODEL-PROXY] #${reqId} Gemini API error: ${errText}`);
+                                    clientRes.writeHead(502, { 'content-type': 'application/json' });
+                                    clientRes.end(JSON.stringify({ error: { message: 'Gemini vision error: ' + errText } }));
+                                    return;
+                                }
+                                const anthropicResp = geminiToAnthropic(geminiResp, parsed.model);
+                                // Track usage for cost calculation
+                                const usage = anthropicResp.usage || {};
+                                recordUsage('gemini', usage.input_tokens || 0, usage.output_tokens || 0);
+                                console.error(`[MODEL-PROXY] #${reqId} Gemini done in ${((Date.now() - t0) / 1000).toFixed(1)}s (in=${usage.input_tokens} out=${usage.output_tokens})`);
+                                clientRes.writeHead(200, { 'content-type': 'application/json' });
+                                clientRes.end(JSON.stringify(anthropicResp));
+                            });
+                            return; // Async — skip normal proxy flow
                         }
                     } else {
                         // IMAGE_FALLBACK === 'anthropic' (default): route
