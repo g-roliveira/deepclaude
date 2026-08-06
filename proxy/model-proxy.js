@@ -5,19 +5,30 @@ import { Transform } from 'stream';
 
 const ANTHROPIC_FALLBACK = 'https://api.anthropic.com';
 const MODEL_PATHS = ['/v1/messages'];
+const MAX_BODY_SIZE = 50 * 1024 * 1024; // 50 MB
 const REQUEST_TIMEOUT_MS = 5 * 60 * 1000; // 5 min per request
 
 const MODEL_REMAP = {
     deepseek: {
+        _default: { fable: 'deepseek-v4-pro', opus: 'deepseek-v4-pro', sonnet: 'deepseek-v4-flash', haiku: 'deepseek-v4-flash' },
+        'claude-fable-5':     'deepseek-v4-pro',
+        'claude-opus-5':      'deepseek-v4-pro',
         'claude-opus-4-6':    'deepseek-v4-pro',
         'claude-opus-4-7':    'deepseek-v4-pro',
+        'claude-opus-4-8':    'deepseek-v4-pro',
+        'claude-sonnet-5':    'deepseek-v4-flash',
         'claude-sonnet-4-6':  'deepseek-v4-flash',
         'claude-sonnet-4-5-20250929': 'deepseek-v4-flash',
         'claude-haiku-4-5-20251001':  'deepseek-v4-flash',
     },
     openrouter: {
+        _default: { fable: 'deepseek/deepseek-v4-pro', opus: 'deepseek/deepseek-v4-pro', sonnet: 'deepseek/deepseek-v4-flash', haiku: 'deepseek/deepseek-v4-flash' },
+        'claude-fable-5':     'deepseek/deepseek-v4-pro',
+        'claude-opus-5':      'deepseek/deepseek-v4-pro',
         'claude-opus-4-6':    'deepseek/deepseek-v4-pro',
         'claude-opus-4-7':    'deepseek/deepseek-v4-pro',
+        'claude-opus-4-8':    'deepseek/deepseek-v4-pro',
+        'claude-sonnet-5':    'deepseek/deepseek-v4-flash',
         'claude-sonnet-4-6':  'deepseek/deepseek-v4-flash',
         'claude-sonnet-4-5-20250929': 'deepseek/deepseek-v4-flash',
         'claude-haiku-4-5-20251001':  'deepseek/deepseek-v4-flash',
@@ -311,17 +322,45 @@ export function startModelProxy({ targetUrl, apiKey, startPort = 3200, backends,
             }
 
             const chunks = [];
-            clientReq.on('data', c => chunks.push(c));
+            let bodySize = 0;
+            clientReq.on('data', c => {
+                bodySize += c.length;
+                if (bodySize > MAX_BODY_SIZE) {
+                    console.error(`[MODEL-PROXY] #${reqCount} BODY_TOO_LARGE (${bodySize} bytes)`);
+                    clientRes.writeHead(413, { 'content-type': 'application/json' });
+                    clientRes.end(JSON.stringify({ error: { message: 'Request body too large' } }));
+                    clientReq.destroy();
+                    return;
+                }
+                chunks.push(c);
+            });
             clientReq.on('end', () => {
+                if (bodySize > MAX_BODY_SIZE) return;
                 let body = Buffer.concat(chunks);
 
                 // Remap Anthropic model names to backend-specific names
                 if (isModelCall && MODEL_REMAP[state.mode]) {
                     try {
                         const parsed = JSON.parse(body);
-                        const mapped = MODEL_REMAP[state.mode][parsed.model];
-                        if (mapped) {
+                        const remap = MODEL_REMAP[state.mode];
+                        let mapped = remap[parsed.model];
+                        if (!mapped) {
+                            // Tier-based fallback: match fable/opus/sonnet/haiku substring
+                            const tier = parsed.model.includes('fable') ? 'fable'
+                                : parsed.model.includes('opus') ? 'opus'
+                                : parsed.model.includes('sonnet') ? 'sonnet'
+                                : parsed.model.includes('haiku') ? 'haiku'
+                                : null;
+                            if (remap._default && tier) {
+                                mapped = remap._default[tier];
+                                console.log(`[MODEL-PROXY] #${reqId} model fallback: ${parsed.model} → ${mapped} (tier=${tier}, add to MODEL_REMAP to silence)`);
+                            } else {
+                                console.log(`[MODEL-PROXY] #${reqId} WARNING: unmapped model ${parsed.model} forwarded raw — backend may pick wrong model`);
+                            }
+                        } else {
                             console.log(`[MODEL-PROXY] #${reqId} model remap: ${parsed.model} → ${mapped}`);
+                        }
+                        if (mapped) {
                             parsed.model = mapped;
                             body = Buffer.from(JSON.stringify(parsed));
                         }
@@ -348,7 +387,15 @@ export function startModelProxy({ targetUrl, apiKey, startPort = 3200, backends,
                 if (isModelCall) {
                     try {
                         const parsed = JSON.parse(body);
-                        stripAllThinkingBlocks(parsed);
+                        // Non-Anthropic backends don't honor Anthropic's
+                        // extended-thinking spec consistently. Drop the
+                        // top-level config so a stale thinking block in
+                        // history doesn't 400. The actual thinking blocks
+                        // in message history stay — DeepSeek requires
+                        // its own blocks passed back verbatim for
+                        // continuity.
+                        delete parsed.thinking;
+                        delete parsed.context_management;
                         body = Buffer.from(JSON.stringify(parsed));
                     } catch { /* pass through */ }
                 }
@@ -370,6 +417,20 @@ export function startModelProxy({ targetUrl, apiKey, startPort = 3200, backends,
 
                     const ct = proxyRes.headers['content-type'] || '';
                     const isSSE = ct.includes('text/event-stream');
+
+                    // Without this, an upstream stream error (connection reset
+                    // mid-response) emits an unhandled 'error' on proxyRes and
+                    // crashes the proxy process.
+                    proxyRes.on('error', (err) => {
+                        const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
+                        console.error(`[MODEL-PROXY] #${reqId} upstream stream error after ${elapsed}s: ${err.message}`);
+                        if (!clientRes.headersSent) {
+                            clientRes.writeHead(502, { 'content-type': 'application/json' });
+                            clientRes.end(JSON.stringify({ error: { message: 'Upstream stream error' } }));
+                        } else {
+                            clientRes.destroy(err);
+                        }
+                    });
 
                     if (isModelCall && isSSE) {
                         clientRes.writeHead(proxyRes.statusCode, proxyRes.headers);
@@ -415,8 +476,14 @@ export function startModelProxy({ targetUrl, apiKey, startPort = 3200, backends,
                     console.error(`[MODEL-PROXY] #${reqId} ERROR after ${elapsed}s: ${err.message}`);
                     if (!clientRes.headersSent) {
                         clientRes.writeHead(502, { 'content-type': 'application/json' });
+                        clientRes.end(JSON.stringify({ error: { message: 'Upstream connection error' } }));
+                    } else {
+                        // Headers already sent (likely mid-SSE) — emitting JSON
+                        // here would inject a non-event into the event-stream and
+                        // break the client parser. Terminate the response so the
+                        // client sees a clean transport error instead.
+                        clientRes.destroy(err);
                     }
-                    clientRes.end(JSON.stringify({ error: { message: 'Upstream connection error' } }));
                 });
 
                 proxyReq.end(body);

@@ -26,6 +26,7 @@ while [[ $# -gt 0 ]]; do
         --cost)       ACTION="cost"; shift ;;
         --benchmark)  ACTION="benchmark"; shift ;;
         --help|-h)    ACTION="help"; shift ;;
+        --)           shift; break ;;
         *)            break ;;
     esac
 done
@@ -50,24 +51,24 @@ resolve_backend() {
             key="${DEEPSEEK_API_KEY:-}"
             [[ -z "$key" ]] && { echo "ERROR: DEEPSEEK_API_KEY not set" >&2; exit 1; }
             url="$DEEPSEEK_URL"
-            opus="deepseek-v4-pro"; sonnet="deepseek-v4-pro"
-            haiku="deepseek-v4-flash"; subagent="deepseek-v4-flash"
+            opus="deepseek-v4-pro[1m]"; sonnet="deepseek-v4-pro[1m]"
+            haiku="deepseek-v4-flash[1m]"; subagent="deepseek-v4-flash[1m]"
             ;;
         or|openrouter)
             key="${OPENROUTER_API_KEY:-}"
             [[ -z "$key" ]] && { echo "ERROR: OPENROUTER_API_KEY not set" >&2; exit 1; }
             url="$OPENROUTER_URL"
-            opus="deepseek/deepseek-v4-pro"; sonnet="deepseek/deepseek-v4-pro"
-            haiku="deepseek/deepseek-v4-pro"; subagent="deepseek/deepseek-v4-pro"
+            opus="deepseek/deepseek-v4-pro[1m]"; sonnet="deepseek/deepseek-v4-pro[1m]"
+            haiku="deepseek/deepseek-v4-pro[1m]"; subagent="deepseek/deepseek-v4-pro[1m]"
             ;;
         fw|fireworks)
             key="${FIREWORKS_API_KEY:-}"
             [[ -z "$key" ]] && { echo "ERROR: FIREWORKS_API_KEY not set" >&2; exit 1; }
             url="$FIREWORKS_URL"
-            opus="accounts/fireworks/models/deepseek-v4-pro"
-            sonnet="accounts/fireworks/models/deepseek-v4-pro"
-            haiku="accounts/fireworks/models/deepseek-v4-pro"
-            subagent="accounts/fireworks/models/deepseek-v4-pro"
+            opus="accounts/fireworks/models/deepseek-v4-pro[1m]"
+            sonnet="accounts/fireworks/models/deepseek-v4-pro[1m]"
+            haiku="accounts/fireworks/models/deepseek-v4-pro[1m]"
+            subagent="accounts/fireworks/models/deepseek-v4-pro[1m]"
             ;;
         anthropic) ;;
         *) echo "ERROR: Unknown backend '$BACKEND'. Use: ds, or, fw, anthropic" >&2; exit 1 ;;
@@ -198,7 +199,7 @@ run_benchmark() {
 launch_claude() {
     if [[ "$BACKEND" == "anthropic" ]]; then
         echo "  Launching Claude Code (normal Anthropic backend)..."
-        unset ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN
+        unset ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN ANTHROPIC_API_KEY
         unset ANTHROPIC_DEFAULT_OPUS_MODEL ANTHROPIC_DEFAULT_SONNET_MODEL
         unset ANTHROPIC_DEFAULT_HAIKU_MODEL CLAUDE_CODE_SUBAGENT_MODEL
         unset CLAUDE_CODE_EFFORT_LEVEL
@@ -207,17 +208,44 @@ launch_claude() {
 
     resolve_backend
 
-    echo "  Launching Claude Code via $BACKEND..."
+    echo "  Starting model proxy for $BACKEND..."
     echo "  Endpoint: $RESOLVED_URL"
     echo "  Model: $RESOLVED_OPUS (main) + $RESOLVED_HAIKU (subagents)"
     echo ""
 
-    export ANTHROPIC_BASE_URL="$RESOLVED_URL"
-    export ANTHROPIC_AUTH_TOKEN="$RESOLVED_KEY"
-    set_model_env
-    unset ANTHROPIC_API_KEY
+    local port_file
+    port_file=$(mktemp)
+    node "$SCRIPT_DIR/proxy/start-proxy.js" "$RESOLVED_URL" "$RESOLVED_KEY" > "$port_file" &
+    PROXY_PID=$!
 
-    exec claude "$@"
+    local tries=0
+    while [[ ! -s "$port_file" ]] && [[ $tries -lt 30 ]]; do
+        sleep 0.2
+        tries=$((tries + 1))
+    done
+
+    if [[ ! -s "$port_file" ]]; then
+        echo "ERROR: Proxy failed to start" >&2
+        rm -f "$port_file"
+        exit 1
+    fi
+
+    local proxy_port
+    proxy_port=$(head -1 "$port_file")
+    rm -f "$port_file"
+
+    echo "  Proxy on :$proxy_port -> $RESOLVED_URL"
+    echo "  Cost tracking: curl http://127.0.0.1:$proxy_port/_proxy/cost"
+    echo ""
+
+    export ANTHROPIC_BASE_URL="http://127.0.0.1:$proxy_port"
+    # Set the backend key as ANTHROPIC_API_KEY — proxy replaces it in-flight with
+    # the correct auth for the upstream, so subscription OAuth tokens are also handled.
+    export ANTHROPIC_API_KEY="$RESOLVED_KEY"
+    unset ANTHROPIC_AUTH_TOKEN
+    set_model_env
+
+    claude "$@"
 }
 
 launch_remote() {
