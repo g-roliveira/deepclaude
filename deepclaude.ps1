@@ -203,7 +203,7 @@ if ($Remote) {
     Write-Host "`n  Starting model proxy for $($p.name)..." -ForegroundColor Cyan
 
     $proxyScript = Join-Path $ScriptDir "proxy\start-proxy.js"
-    $proxyProc = Start-Process -FilePath "node" -ArgumentList $proxyScript,$p.url,$p.key,$Backend -PassThru -WindowStyle Hidden -RedirectStandardOutput "$env:TEMP\deepclaude-proxy-port.txt"
+    $proxyProc = Start-Process -FilePath "node" -ArgumentList $proxyScript,$p.url,$p.key,$Backend -PassThru -WindowStyle Hidden -RedirectStandardOutput "$env:TEMP\deepclaude-proxy-port.txt" -RedirectStandardError "$env:TEMP\deepclaude-proxy-err.txt"
 
     $tries = 0
     while ($tries -lt 30) {
@@ -271,7 +271,7 @@ Write-Host "  Model: $($p.opus) (main) + $($p.haiku) (subagents)" -ForegroundCol
 Write-Host ""
 
 $proxyScript = Join-Path $ScriptDir "proxy\start-proxy.js"
-$proxyProc = Start-Process -FilePath "node" -ArgumentList $proxyScript,$p.url,$p.key,$Backend -PassThru -WindowStyle Hidden -RedirectStandardOutput "$env:TEMP\deepclaude-proxy-port.txt"
+$proxyProc = Start-Process -FilePath "node" -ArgumentList $proxyScript,$p.url,$p.key,$Backend -PassThru -WindowStyle Hidden -RedirectStandardOutput "$env:TEMP\deepclaude-proxy-port.txt" -RedirectStandardError "$env:TEMP\deepclaude-proxy-err.txt"
 
 $tries = 0
 while ($tries -lt 30) {

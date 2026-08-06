@@ -220,7 +220,7 @@ launch_claude() {
 
     local port_file
     port_file=$(mktemp)
-    node "$SCRIPT_DIR/proxy/start-proxy.js" "$RESOLVED_URL" "$RESOLVED_KEY" "$BACKEND" > "$port_file" &
+    node "$SCRIPT_DIR/proxy/start-proxy.js" "$RESOLVED_URL" "$RESOLVED_KEY" "$BACKEND" > "$port_file" 2>/dev/null &
     PROXY_PID=$!
 
     local tries=0
@@ -267,7 +267,7 @@ launch_remote() {
 
     local port_file
     port_file=$(mktemp)
-    node "$SCRIPT_DIR/proxy/start-proxy.js" "$RESOLVED_URL" "$RESOLVED_KEY" "$BACKEND" > "$port_file" &
+    node "$SCRIPT_DIR/proxy/start-proxy.js" "$RESOLVED_URL" "$RESOLVED_KEY" "$BACKEND" > "$port_file" 2>/dev/null &
     PROXY_PID=$!
 
     local tries=0
