@@ -8,6 +8,17 @@ const MODEL_PATHS = ['/v1/messages'];
 const MAX_BODY_SIZE = 50 * 1024 * 1024; // 50 MB
 const REQUEST_TIMEOUT_MS = 5 * 60 * 1000; // 5 min per request
 
+// Image fallback: when a non-Anthropic backend receives an image (which
+// DeepSeek's compat endpoint rejects with 400), reroute that single turn
+// to a vision-capable provider, then return to the normal backend.
+// DEEPCLAUDE_IMAGE_FALLBACK:
+//   anthropic (default) — uses existing Claude Code auth (Max subscription)
+//   openrouter — uses OPENROUTER_API_KEY + DEEPCLAUDE_IMAGE_MODEL
+//   off — disables fallback
+const IMAGE_FALLBACK = process.env.DEEPCLAUDE_IMAGE_FALLBACK || 'anthropic';
+const IMAGE_FALLBACK_ENABLED = IMAGE_FALLBACK !== 'off';
+const IMAGE_FALLBACK_MODEL = process.env.DEEPCLAUDE_IMAGE_MODEL || 'google/gemini-2.5-flash';
+
 const MODEL_REMAP = {
     deepseek: {
         _default: { fable: 'deepseek-v4-pro', opus: 'deepseek-v4-pro', sonnet: 'deepseek-v4-flash', haiku: 'deepseek-v4-flash' },
@@ -35,12 +46,26 @@ const MODEL_REMAP = {
     },
 };
 
+// Many-to-one collisions in MODEL_REMAP collapse last-write-wins.
+// Used on the image-fallback path to swap backend model names back
+// to canonical Claude names on the wire.
+const REVERSE_MODEL_REMAP = {};
+for (const [backend, table] of Object.entries(MODEL_REMAP)) {
+    REVERSE_MODEL_REMAP[backend] = {};
+    for (const [claudeName, backendName] of Object.entries(table)) {
+        if (claudeName === '_default') continue;
+        REVERSE_MODEL_REMAP[backend][backendName] = claudeName;
+    }
+}
+
 const PRICING_PER_M = {
-    deepseek:   { input: 0.44,  output: 0.87 },
-    openrouter: { input: 0.44,  output: 0.87 },
-    fireworks:  { input: 1.74,  output: 3.48 },
-    anthropic:  { input: 3.00,  output: 15.00 },
-    _single:    { input: 0.44,  output: 0.87 },
+    deepseek:       { input: 0.44,  output: 0.87 },
+    openrouter:     { input: 0.44,  output: 0.87 },
+    fireworks:      { input: 1.74,  output: 3.48 },
+    anthropic:      { input: 3.00,  output: 15.00 },
+    anthropic_max:  { input: 0,     output: 0 },     // Max subscription quota
+    image_fallback: { input: 0.15,  output: 0.60 },   // Gemini Flash via OpenRouter
+    _single:        { input: 0.44,  output: 0.87 },
 };
 
 /**
@@ -49,12 +74,13 @@ const PRICING_PER_M = {
  * message_delta, which crashes Claude Code ("$.input_tokens" is undefined).
  */
 class UsageNormalizer extends Transform {
-    constructor(onUsage) {
+    constructor(onUsage, { modelRewrite } = {}) {
         super();
         this._buf = '';
         this._onUsage = onUsage;
         this._inputTokens = 0;
         this._outputTokens = 0;
+        this._modelRewrite = modelRewrite || null;
     }
 
     _transform(chunk, _enc, cb) {
@@ -87,6 +113,13 @@ class UsageNormalizer extends Transform {
                     this._inputTokens = d.message.usage.input_tokens || 0;
                 } else {
                     d.message.usage = { input_tokens: 0, output_tokens: 0 };
+                    changed = true;
+                }
+                // Rewrite model name on the response side so Claude Code
+                // sees the backend model it expects, not the canonical
+                // Claude name used on the image-fallback wire.
+                if (this._modelRewrite && d.message.model === this._modelRewrite.from) {
+                    d.message.model = this._modelRewrite.to;
                     changed = true;
                 }
             }
@@ -177,6 +210,51 @@ function stripRedactedThinking(parsed) {
     parsed.content = parsed.content.filter(
         block => block.type !== 'redacted_thinking'
     );
+}
+
+// Recurses into tool_result.content[] because Claude Code's Read tool
+// wraps a returned PNG there rather than at the top of the message.
+function containsImageBlock(messages) {
+    if (!Array.isArray(messages)) return false;
+    const blockHasImage = (block) => {
+        if (!block) return false;
+        if (block.type === 'image') return true;
+        if (block.type === 'tool_result' && Array.isArray(block.content)) {
+            return block.content.some(blockHasImage);
+        }
+        return false;
+    };
+    for (const msg of messages) {
+        if (!Array.isArray(msg.content)) continue;
+        if (msg.content.some(blockHasImage)) return true;
+    }
+    return false;
+}
+
+// Replaces image blocks with a text placeholder, recursing into
+// tool_result.content[]. Used on non-Anthropic routes so a single image
+// turn earlier in history doesn't pin the rest of the conversation to
+// Anthropic — which would silently spend Max quota while the TUI still
+// shows the cheap backend. Returns the count of images replaced.
+function stripImagesFromMessages(messages) {
+    if (!Array.isArray(messages)) return 0;
+    let count = 0;
+    const strip = (block) => {
+        if (!block) return block;
+        if (block.type === 'image') {
+            count++;
+            return { type: 'text', text: '[image omitted]' };
+        }
+        if (block.type === 'tool_result' && Array.isArray(block.content)) {
+            return { ...block, content: block.content.map(strip) };
+        }
+        return block;
+    };
+    for (const msg of messages) {
+        if (!Array.isArray(msg.content)) continue;
+        msg.content = msg.content.map(strip);
+    }
+    return count;
 }
 
 export function startModelProxy({ targetUrl, apiKey, startPort = 3200, backends, defaultMode }) {
@@ -348,52 +426,18 @@ export function startModelProxy({ targetUrl, apiKey, startPort = 3200, backends,
                 return;
             }
 
-            // In anthropic mode, everything passes through transparently
-            const isAnthropicMode = state.mode === 'anthropic';
-            const isModelCall = !isAnthropicMode && MODEL_PATHS.includes(urlPath);
-            const dest = isModelCall ? state.target : new URL(ANTHROPIC_FALLBACK);
-
-            // Build upstream path. target.pathname may overlap with
-            // clientReq.url (e.g. OpenRouter /api/v1 + /v1/messages).
-            // Strip the shared prefix to avoid /api/v1/v1/messages.
-            let fullPath;
-            if (isModelCall) {
-                const base = state.target.pathname.replace(/\/$/, '');
-                let overlap = '';
-                for (let i = 1; i <= Math.min(base.length, urlPath.length); i++) {
-                    if (base.endsWith(urlPath.substring(0, i))) overlap = urlPath.substring(0, i);
-                }
-                fullPath = overlap ? base + urlPath.substring(overlap.length) : base + urlPath;
-            } else {
-                fullPath = clientReq.url;
-            }
-
+            // Routing is deferred to the end-of-body handler so the body
+            // can be inspected for image content blocks before the
+            // dest/headers are decided.
             const reqId = ++reqCount;
             const t0 = Date.now();
-
-            if (isModelCall) {
-                console.log(`[MODEL-PROXY] #${reqId} → ${dest.hostname}${fullPath}`);
-            }
-
-            const headers = { ...clientReq.headers, host: dest.host };
-            delete headers['content-length'];
-
-            if (isModelCall) {
-                delete headers['authorization'];
-                delete headers['x-api-key'];
-                if (state.useBearer) {
-                    headers['authorization'] = `Bearer ${state.apiKey}`;
-                } else {
-                    headers['x-api-key'] = state.apiKey;
-                }
-            }
 
             const chunks = [];
             let bodySize = 0;
             clientReq.on('data', c => {
                 bodySize += c.length;
                 if (bodySize > MAX_BODY_SIZE) {
-                    console.error(`[MODEL-PROXY] #${reqCount} BODY_TOO_LARGE (${bodySize} bytes)`);
+                    console.error(`[MODEL-PROXY] #${reqId} BODY_TOO_LARGE (${bodySize} bytes)`);
                     clientRes.writeHead(413, { 'content-type': 'application/json' });
                     clientRes.end(JSON.stringify({ error: { message: 'Request body too large' } }));
                     clientReq.destroy();
@@ -404,15 +448,138 @@ export function startModelProxy({ targetUrl, apiKey, startPort = 3200, backends,
             clientReq.on('end', () => {
                 if (bodySize > MAX_BODY_SIZE) return;
                 let body = Buffer.concat(chunks);
+                const isMessagesPath = MODEL_PATHS.includes(urlPath);
 
-                // Telemetry mock: intercept title-generation and quota-probe
-                // requests. These are not real inference — Claude Code generates
-                // conversation titles and checks credit status via small model
-                // calls. Answering locally saves an API round-trip and token cost.
-                if (isModelCall) {
+                let parsed = null;
+                if (isMessagesPath) {
+                    try { parsed = JSON.parse(body); } catch {}
+                }
+
+                // --- Image fallback detection ---
+                // Only the latest message triggers the reroute (a fresh
+                // attachment or a Read tool_result that just came back).
+                // Stale images in older history are stripped below so the
+                // conversation can return to the backend on text-only
+                // follow-ups instead of silently pinning to the fallback.
+                const lastMsg = parsed?.messages?.[parsed.messages.length - 1];
+                const hasImage = (
+                    IMAGE_FALLBACK_ENABLED &&
+                    state.mode !== 'anthropic' &&
+                    !!lastMsg &&
+                    containsImageBlock([lastMsg])
+                );
+
+                const isAnthropicMode = state.mode === 'anthropic';
+                const isModelCall = !isAnthropicMode && isMessagesPath;
+
+                // When routing image to fallback provider, swap model names
+                // on the wire so the provider sees a model it recognizes,
+                // then swap back on the response so Claude Code doesn't notice.
+                let imageRewrite = null;
+                let effectiveMode = state.mode;
+                let dest, fullPath, headers;
+
+                if (hasImage) {
+                    if (IMAGE_FALLBACK === 'openrouter') {
+                        // Route image to OpenRouter with a vision-capable model
+                        const orKey = process.env.OPENROUTER_API_KEY;
+                        if (!orKey) {
+                            console.log(`[MODEL-PROXY] #${reqId} image fallback: OPENROUTER_API_KEY not set, using Anthropic`);
+                            dest = new URL(ANTHROPIC_FALLBACK);
+                            headers = { ...clientReq.headers, host: dest.host };
+                            delete headers['content-length'];
+                            effectiveMode = 'anthropic_max';
+                        } else {
+                            dest = new URL('https://openrouter.ai/api/v1');
+                            headers = { ...clientReq.headers, host: dest.host };
+                            delete headers['content-length'];
+                            delete headers['authorization'];
+                            delete headers['x-api-key'];
+                            headers['authorization'] = `Bearer ${orKey}`;
+                            if (parsed?.model) {
+                                imageRewrite = { backend: parsed.model, canonical: IMAGE_FALLBACK_MODEL };
+                                parsed.model = IMAGE_FALLBACK_MODEL;
+                            }
+                            effectiveMode = 'image_fallback';
+                        }
+                    } else {
+                        // IMAGE_FALLBACK === 'anthropic' (default): route
+                        // to api.anthropic.com using existing Claude Code auth
+                        dest = new URL(ANTHROPIC_FALLBACK);
+                        headers = { ...clientReq.headers, host: dest.host };
+                        delete headers['content-length'];
+                        effectiveMode = 'anthropic_max';
+                    }
+
+                    // Swap model to canonical Claude name for Anthropic
+                    if (effectiveMode === 'anthropic_max' && parsed?.model) {
+                        const canonical = REVERSE_MODEL_REMAP[state.mode]?.[parsed.model];
+                        if (canonical) {
+                            imageRewrite = { backend: parsed.model, canonical };
+                            parsed.model = canonical;
+                        }
+                    }
+
+                    // Drop thinking config on image reroute — Anthropic 400s
+                    // with clear_thinking strategies if thinking isn't enabled.
+                    delete parsed.thinking;
+                    delete parsed.context_management;
+
+                    body = Buffer.from(JSON.stringify(parsed));
+                    fullPath = '/v1/messages';
+                    console.log(`[MODEL-PROXY] #${reqId} [image→${effectiveMode}${imageRewrite ? `, ${imageRewrite.backend}→${imageRewrite.canonical}` : ''}]`);
+                } else {
+                    // Normal routing
+                    dest = isModelCall ? state.target : new URL(ANTHROPIC_FALLBACK);
+
+                    let fullPathBase;
+                    if (isModelCall) {
+                        const base = state.target.pathname.replace(/\/$/, '');
+                        let overlap = '';
+                        for (let i = 1; i <= Math.min(base.length, urlPath.length); i++) {
+                            if (base.endsWith(urlPath.substring(0, i))) overlap = urlPath.substring(0, i);
+                        }
+                        fullPathBase = overlap ? base + urlPath.substring(overlap.length) : base + urlPath;
+                    } else {
+                        fullPathBase = clientReq.url;
+                    }
+                    fullPath = fullPathBase;
+
+                    headers = { ...clientReq.headers, host: dest.host };
+                    delete headers['content-length'];
+
+                    if (isModelCall) {
+                        delete headers['authorization'];
+                        delete headers['x-api-key'];
+                        if (state.useBearer) {
+                            headers['authorization'] = `Bearer ${state.apiKey}`;
+                        } else {
+                            headers['x-api-key'] = state.apiKey;
+                        }
+                    }
+
+                    // Strip stale images from message history so a single
+                    // image turn doesn't pin the rest of the conversation to
+                    // the fallback provider.
+                    if (isModelCall && parsed?.['messages']) {
+                        const stripped = stripImagesFromMessages(parsed.messages);
+                        if (stripped > 0) {
+                            console.log(`[MODEL-PROXY] #${reqId} stripped ${stripped} stale image(s) from history`);
+                            body = Buffer.from(JSON.stringify(parsed));
+                        }
+                    }
+                }
+
+                const trackUsage = isModelCall || hasImage;
+                if (trackUsage) {
+                    console.log(`[MODEL-PROXY] #${reqId} → ${dest.hostname}${fullPath}`);
+                }
+
+                // Telemetry mock: intercept title-generation
+                if (trackUsage) {
                     try {
-                        const parsed = JSON.parse(body);
-                        if (isTitleGenRequest(parsed)) {
+                        const p = JSON.parse(body);
+                        if (isTitleGenRequest(p)) {
                             console.log(`[MODEL-PROXY] #${reqId} title-gen mocked (saved 1 round-trip)`);
                             const mockResp = makeTitleGenResponse();
                             clientRes.writeHead(200, { 'content-type': 'application/json' });
@@ -425,63 +592,58 @@ export function startModelProxy({ targetUrl, apiKey, startPort = 3200, backends,
                 // Remap Anthropic model names to backend-specific names
                 if (isModelCall && MODEL_REMAP[state.mode]) {
                     try {
-                        const parsed = JSON.parse(body);
+                        const p = JSON.parse(body);
                         const remap = MODEL_REMAP[state.mode];
-                        let mapped = remap[parsed.model];
+                        let mapped = remap[p.model];
                         if (!mapped) {
-                            // Tier-based fallback: match fable/opus/sonnet/haiku substring
-                            const tier = parsed.model.includes('fable') ? 'fable'
-                                : parsed.model.includes('opus') ? 'opus'
-                                : parsed.model.includes('sonnet') ? 'sonnet'
-                                : parsed.model.includes('haiku') ? 'haiku'
+                            const tier = p.model.includes('fable') ? 'fable'
+                                : p.model.includes('opus') ? 'opus'
+                                : p.model.includes('sonnet') ? 'sonnet'
+                                : p.model.includes('haiku') ? 'haiku'
                                 : null;
                             if (remap._default && tier) {
                                 mapped = remap._default[tier];
-                                console.log(`[MODEL-PROXY] #${reqId} model fallback: ${parsed.model} → ${mapped} (tier=${tier}, add to MODEL_REMAP to silence)`);
+                                console.log(`[MODEL-PROXY] #${reqId} model fallback: ${p.model} → ${mapped} (tier=${tier})`);
                             } else {
-                                console.log(`[MODEL-PROXY] #${reqId} WARNING: unmapped model ${parsed.model} forwarded raw — backend may pick wrong model`);
+                                console.log(`[MODEL-PROXY] #${reqId} WARNING: unmapped model ${p.model} forwarded raw`);
                             }
                         } else {
-                            console.log(`[MODEL-PROXY] #${reqId} model remap: ${parsed.model} → ${mapped}`);
+                            console.log(`[MODEL-PROXY] #${reqId} model remap: ${p.model} → ${mapped}`);
                         }
                         if (mapped) {
-                            parsed.model = mapped;
-                            body = Buffer.from(JSON.stringify(parsed));
+                            p.model = mapped;
+                            body = Buffer.from(JSON.stringify(p));
                         }
-                    } catch { /* not JSON or parse error, pass through */ }
+                    } catch { /* pass through */ }
                 }
 
-                // Strip thinking blocks before forwarding.
-                // Non-Anthropic: strip ALL blocks — backends reject thinking blocks
-                // they didn't generate, even unsigned ones.
-                // Anthropic after a non-Anthropic session: also strip ALL, because
-                // foreign backends generate signed-but-invalid thinking blocks that
-                // stripUnsignedThinkingBlocks passes through, causing Anthropic 400s.
-                if (isAnthropicMode && MODEL_PATHS.includes(urlPath)) {
+                // Strip thinking blocks before forwarding
+                if (isAnthropicMode && isMessagesPath && !hasImage) {
                     try {
-                        const parsed = JSON.parse(body);
+                        const p = JSON.parse(body);
                         if (state.hadNonAnthropicSession) {
-                            stripAllThinkingBlocks(parsed);
+                            stripAllThinkingBlocks(p);
                         } else {
-                            stripUnsignedThinkingBlocks(parsed);
+                            stripUnsignedThinkingBlocks(p);
                         }
-                        body = Buffer.from(JSON.stringify(parsed));
+                        body = Buffer.from(JSON.stringify(p));
                     } catch { /* pass through */ }
                 }
                 if (isModelCall) {
                     try {
-                        const parsed = JSON.parse(body);
-                        // Non-Anthropic backends don't honor Anthropic's
-                        // extended-thinking spec consistently. Drop the
-                        // top-level config so a stale thinking block in
-                        // history doesn't 400. The actual thinking blocks
-                        // in message history stay — DeepSeek requires
-                        // its own blocks passed back verbatim for
-                        // continuity.
-                        delete parsed.thinking;
-                        delete parsed.context_management;
-                        body = Buffer.from(JSON.stringify(parsed));
+                        const p = JSON.parse(body);
+                        delete p.thinking;
+                        delete p.context_management;
+                        body = Buffer.from(JSON.stringify(p));
                     } catch { /* pass through */ }
+                }
+
+                // Strip accept-encoding when the body was mutated (image
+                // fallback swaps model names in the response), otherwise
+                // the upstream may gzip and we can't rewrite.
+                const finalHeaders = { ...headers, 'content-length': body.length };
+                if (hasImage) {
+                    delete finalHeaders['accept-encoding'];
                 }
 
                 const opts = {
@@ -489,12 +651,12 @@ export function startModelProxy({ targetUrl, apiKey, startPort = 3200, backends,
                     port: dest.port || 443,
                     path: fullPath,
                     method: clientReq.method,
-                    headers: { ...headers, 'content-length': body.length },
+                    headers: finalHeaders,
                     timeout: REQUEST_TIMEOUT_MS,
                 };
 
                 const proxyReq = httpsRequest(opts, (proxyRes) => {
-                    if (isModelCall) {
+                    if (trackUsage) {
                         const ttfb = Date.now() - t0;
                         console.log(`[MODEL-PROXY] #${reqId} TTFB ${ttfb}ms (status ${proxyRes.statusCode})`);
                     }
@@ -516,24 +678,42 @@ export function startModelProxy({ targetUrl, apiKey, startPort = 3200, backends,
                         }
                     });
 
-                    if (isModelCall && isSSE) {
-                        clientRes.writeHead(proxyRes.statusCode, proxyRes.headers);
-                        const norm = new UsageNormalizer((inp, out) => recordUsage(state.mode, inp, out));
+                    if (trackUsage && isSSE) {
+                        // Strip content-encoding when body is mutated
+                        // (image fallback rewrites model names in-stream).
+                        const sseHeaders = hasImage
+                            ? (() => { const { 'content-encoding': _ce, ...h } = proxyRes.headers; return h; })()
+                            : proxyRes.headers;
+                        clientRes.writeHead(proxyRes.statusCode, sseHeaders);
+                        const modelRewrite = imageRewrite
+                            ? { from: imageRewrite.canonical, to: imageRewrite.backend }
+                            : null;
+                        const norm = new UsageNormalizer(
+                            (inp, out) => recordUsage(effectiveMode, inp, out),
+                            { modelRewrite },
+                        );
                         proxyRes.pipe(norm).pipe(clientRes);
                         proxyRes.on('end', () => {
                             console.log(`[MODEL-PROXY] #${reqId} done in ${((Date.now() - t0) / 1000).toFixed(1)}s (${norm._inputTokens}in/${norm._outputTokens}out)`);
                         });
-                    } else if (isModelCall && ct.includes('application/json')) {
+                    } else if (trackUsage && ct.includes('application/json')) {
                         const respChunks = [];
                         proxyRes.on('data', c => respChunks.push(c));
                         proxyRes.on('end', () => {
                             const raw = Buffer.concat(respChunks);
-                            const fixed = normalizeJsonBody(raw);
+                            let fixed = normalizeJsonBody(raw);
                             try {
                                 const j = JSON.parse(fixed);
-                                if (j.usage) recordUsage(state.mode, j.usage.input_tokens, j.usage.output_tokens);
+                                if (j.usage) recordUsage(effectiveMode, j.usage.input_tokens, j.usage.output_tokens);
+                                if (imageRewrite && j.model === imageRewrite.canonical) {
+                                    j.model = imageRewrite.backend;
+                                    fixed = Buffer.from(JSON.stringify(j));
+                                }
                             } catch {}
-                            const outHeaders = { ...proxyRes.headers, 'content-length': fixed.length };
+                            const jsonHeaders = hasImage
+                                ? (() => { const { 'content-encoding': _ce2, ...h } = proxyRes.headers; return h; })()
+                                : proxyRes.headers;
+                            const outHeaders = { ...jsonHeaders, 'content-length': fixed.length };
                             clientRes.writeHead(proxyRes.statusCode, outHeaders);
                             clientRes.end(fixed);
                             console.log(`[MODEL-PROXY] #${reqId} done in ${((Date.now() - t0) / 1000).toFixed(1)}s (json, ${fixed.length}b)`);
@@ -542,7 +722,7 @@ export function startModelProxy({ targetUrl, apiKey, startPort = 3200, backends,
                         // Non-model or unknown content-type: pass through
                         clientRes.writeHead(proxyRes.statusCode, proxyRes.headers);
                         proxyRes.pipe(clientRes);
-                        if (isModelCall) {
+                        if (trackUsage) {
                             proxyRes.on('end', () => {
                                 console.log(`[MODEL-PROXY] #${reqId} done in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
                             });

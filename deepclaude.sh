@@ -215,7 +215,7 @@ launch_claude() {
 
     local port_file
     port_file=$(mktemp)
-    node "$SCRIPT_DIR/proxy/start-proxy.js" "$RESOLVED_URL" "$RESOLVED_KEY" > "$port_file" &
+    node "$SCRIPT_DIR/proxy/start-proxy.js" "$RESOLVED_URL" "$RESOLVED_KEY" "$BACKEND" > "$port_file" &
     PROXY_PID=$!
 
     local tries=0
@@ -239,8 +239,6 @@ launch_claude() {
     echo ""
 
     export ANTHROPIC_BASE_URL="http://127.0.0.1:$proxy_port"
-    # Set the backend key as ANTHROPIC_API_KEY — proxy replaces it in-flight with
-    # the correct auth for the upstream, so subscription OAuth tokens are also handled.
     export ANTHROPIC_API_KEY="$RESOLVED_KEY"
     unset ANTHROPIC_AUTH_TOKEN
     set_model_env
@@ -264,7 +262,7 @@ launch_remote() {
 
     local port_file
     port_file=$(mktemp)
-    node "$SCRIPT_DIR/proxy/start-proxy.js" "$RESOLVED_URL" "$RESOLVED_KEY" > "$port_file" &
+    node "$SCRIPT_DIR/proxy/start-proxy.js" "$RESOLVED_URL" "$RESOLVED_KEY" "$BACKEND" > "$port_file" &
     PROXY_PID=$!
 
     local tries=0
