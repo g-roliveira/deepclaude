@@ -232,6 +232,8 @@ if ($Remote) {
     $env:ANTHROPIC_DEFAULT_SONNET_MODEL = $p.sonnet
     $env:ANTHROPIC_DEFAULT_HAIKU_MODEL = $p.haiku
     $env:CLAUDE_CODE_SUBAGENT_MODEL = $p.subagent
+    # Compact at 900k (not 1M) — compensates token-count drift vs DeepSeek.
+    $env:CLAUDE_CODE_AUTO_COMPACT_WINDOW = "900000"
     if ($Effort) { $env:CLAUDE_CODE_EFFORT_LEVEL = $Effort }
     Remove-Item Env:ANTHROPIC_API_KEY -ErrorAction SilentlyContinue
     Remove-Item Env:ANTHROPIC_AUTH_TOKEN -ErrorAction SilentlyContinue
@@ -305,6 +307,8 @@ $env:ANTHROPIC_DEFAULT_OPUS_MODEL = $p.opus
 $env:ANTHROPIC_DEFAULT_SONNET_MODEL = $p.sonnet
 $env:ANTHROPIC_DEFAULT_HAIKU_MODEL = $p.haiku
 $env:CLAUDE_CODE_SUBAGENT_MODEL = $p.subagent
+# Compact at 900k (not 1M) — compensates token-count drift vs DeepSeek.
+$env:CLAUDE_CODE_AUTO_COMPACT_WINDOW = "900000"
 if ($Effort) { $env:CLAUDE_CODE_EFFORT_LEVEL = $Effort }
 Remove-Item Env:ANTHROPIC_AUTH_TOKEN -ErrorAction SilentlyContinue
 

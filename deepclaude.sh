@@ -85,6 +85,10 @@ set_model_env() {
     export ANTHROPIC_DEFAULT_SONNET_MODEL="$RESOLVED_SONNET"
     export ANTHROPIC_DEFAULT_HAIKU_MODEL="$RESOLVED_HAIKU"
     export CLAUDE_CODE_SUBAGENT_MODEL="$RESOLVED_SUBAGENT"
+    # Treat the 1M model window as 900k for auto-compaction. Compensates
+    # for token-count estimation drift vs DeepSeek's real count, so we
+    # compact before the hard 1,048,576 limit instead of 400-ing.
+    export CLAUDE_CODE_AUTO_COMPACT_WINDOW=900000
     if [[ -n "$EFFORT_LEVEL" ]]; then
         export CLAUDE_CODE_EFFORT_LEVEL="$EFFORT_LEVEL"
     fi
