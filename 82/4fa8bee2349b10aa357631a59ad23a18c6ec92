@@ -1,0 +1,306 @@
+.surgical-refactor/config.json
+  s_dd017cf1a55dbd::t_6c7cd532be49cb 4-5,10-11,14-16,18-19,21,28-29
+  s_dd017cf1a55dbd::t_baae3535be29d4 7
+  s_dd017cf1a55dbd::t_64cca11f665032 1-3,6,8-9,12-13,22-27,30-32
+  s_dd017cf1a55dbd::t_847489dd1aa53c 17,20
+.agents/skills/surgical-refactor/tests/refactor.test.mjs
+  s_dd017cf1a55dbd::t_0f7e2edf1f0725 1-106,110
+  s_dd017cf1a55dbd::t_45427a2cc0490a 107-109
+  s_dd017cf1a55dbd::t_1409a96c1e3142 111-124
+.agents/skills/surgical-refactor/config/knip.json
+  s_dd017cf1a55dbd::t_64cca11f665032 1-7
+proxy/platform-contract.test.js
+  s_dd017cf1a55dbd::t_847489dd1aa53c 12-13,15,20,29-31
+  s_dd017cf1a55dbd::t_677da40b7a188f 1-11,14,16-19,21-28,32-51
+CLAUDE.md
+  s_dd017cf1a55dbd::t_6c7cd532be49cb 16,21,64,68,70
+  s_dd017cf1a55dbd::t_c25ae6c20b9666 42,46-50
+  s_dd017cf1a55dbd::t_e7630417ff1928 36-38,54
+  s_dd017cf1a55dbd::t_82e55a029e59ec 71
+  s_dee0e6e435bc04::t_10b5942fa72f39 7,9-11,23,29,34,40-41,51-52,62,72,74
+.gitignore
+  s_dd017cf1a55dbd::t_64cca11f665032 2-5
+  s_dd017cf1a55dbd::t_0b5a959914d8ba 1
+.agents/skills/surgical-refactor/config/stryker.config.mjs
+  s_dd017cf1a55dbd::t_64cca11f665032 1-9,11-17,20
+  s_dd017cf1a55dbd::t_7c88f25f0949fa 18
+  s_dd017cf1a55dbd::t_834365a967eeff 10,19
+.agents/skills/surgical-refactor/config/ast-rules/no-eval.yml
+  s_dd017cf1a55dbd::t_64cca11f665032 1-6
+.agents/skills/surgical-refactor/references/tooling.md
+  s_dd017cf1a55dbd::t_03ec40231010d9 1-75
+docs/dead-code-audit.md
+  s_dd017cf1a55dbd::t_353130fba771b3 1-2,7-132
+  s_dd017cf1a55dbd::t_677da40b7a188f 3-6
+.surgical-refactor/contracts.md
+  s_dd017cf1a55dbd::t_6c7cd532be49cb 3-4,6-7
+  s_dd017cf1a55dbd::t_64cca11f665032 1-2,5,8-19
+.agents/skills/surgical-refactor/references/workflow.md
+  s_dd017cf1a55dbd::t_03ec40231010d9 1-88
+.agents/skills/surgical-refactor/tooling/requirements.in
+  s_dd017cf1a55dbd::t_64cca11f665032 1
+.agents/skills/surgical-refactor/tooling/package.json
+  s_dd017cf1a55dbd::t_64cca11f665032 1-13
+.agents/skills/surgical-refactor/config/sgconfig.yml
+  s_dd017cf1a55dbd::t_64cca11f665032 1-2
+.agents/skills/surgical-refactor/SKILL.md
+  s_dd017cf1a55dbd::t_baae3535be29d4 1-64,66-89,92-122
+  s_dd017cf1a55dbd::t_6c7cd532be49cb 65
+  s_dd017cf1a55dbd::t_834365a967eeff 90-91
+proxy/upstream-path.test.js
+  s_dd017cf1a55dbd::t_834365a967eeff 1-17
+docs/surgical-refactor.md
+  s_dd017cf1a55dbd::t_b45149755e441e 100-102
+  s_dd017cf1a55dbd::t_7a1dd11dd4fdc3 1-5,8-11,13-89,94-99,103-126,129-151
+  s_dd017cf1a55dbd::t_847489dd1aa53c 90-93
+  s_dd017cf1a55dbd::t_677da40b7a188f 6-7,12,127-128
+.agents/skills/surgical-refactor/scripts/refactor.mjs
+  s_dd017cf1a55dbd::t_45427a2cc0490a 91-103,112
+  s_dd017cf1a55dbd::t_bf4761756255e6 63,180-182,277,284,304
+  s_dd017cf1a55dbd::t_6c7cd532be49cb 12,203,213
+  s_dd017cf1a55dbd::t_baae3535be29d4 169-173,279-283,285-303,305-311,325,339
+  s_dd017cf1a55dbd::t_03ec40231010d9 76,114,190-192,194-195,315-316
+  s_dd017cf1a55dbd::t_50d12e5d398bf2 126
+  s_dd017cf1a55dbd::t_1409a96c1e3142 210,242,353
+  s_dd017cf1a55dbd::t_20fb97e68a4b70 1-11,13-62,64-75,77-90,104-111,113,115-118,121-125,127-168,174-179,183-189,193,196-202,204-209,211-212,214-241,243-276,278,312-314,317-324,326-338,340-352,354-362
+  s_dd017cf1a55dbd::t_d75b6bf8d5e4a5 119-120
+.agents/skills/surgical-refactor/examples/deepseek-only-policy.json
+  s_dd017cf1a55dbd::t_6c7cd532be49cb 8-9
+  s_dd017cf1a55dbd::t_baae3535be29d4 1-7,10-12
+.agents/skills/surgical-refactor/config/semgrep.yml
+  s_dd017cf1a55dbd::t_d75b6bf8d5e4a5 12-16
+  s_dd017cf1a55dbd::t_64cca11f665032 1-11,17-21
+.agents/skills/surgical-refactor/scripts/bootstrap.mjs
+  s_dd017cf1a55dbd::t_0164ce5f394878 18-19,23-25
+  s_dd017cf1a55dbd::t_a180903265d4da 2,12
+  s_dd017cf1a55dbd::t_64cca11f665032 1,3-11,13-17,20,22,26-29,32-34
+  s_dd017cf1a55dbd::t_6c7cd532be49cb 21,31
+  s_dd017cf1a55dbd::t_d75b6bf8d5e4a5 30
+AGENTS.md
+  s_dd017cf1a55dbd::t_6c7cd532be49cb 16,21,54,62,67,69
+  s_dd017cf1a55dbd::t_677da40b7a188f 52
+  s_dd017cf1a55dbd::t_7a1dd11dd4fdc3 1-15,17-20,22-51,53,55-61,63-66,68,70-71
+.agents/skills/surgical-refactor/config/dependency-cruiser.cjs
+  s_dd017cf1a55dbd::t_64cca11f665032 1-8
+.agents/skills/surgical-refactor/agents/openai.yaml
+  s_dd017cf1a55dbd::t_64cca11f665032 1-4
+docs/windows-removal.md
+  s_dd017cf1a55dbd::t_fbc5408616d0d6 1-91
+proxy/deepseek-compat.test.js
+  s_dd017cf1a55dbd::t_9db14f51cae7f6 324-335
+  s_dd017cf1a55dbd::t_104ae363a8f390 248-305,307-323
+  s_dd017cf1a55dbd::t_6c7cd532be49cb 242,245-246
+  s_dd017cf1a55dbd::t_089f35788abeac 1-34,41-49,53-59,61-87,89-98,100-127,129-137,139-149,151-168,170-200,202-223,228-241,243-244,247
+  s_dd017cf1a55dbd::t_44eaa8a0a9e331 35-40,201,224-227
+docs/deepseek-compatibility.md
+  s_dd017cf1a55dbd::t_677da40b7a188f 3-6
+  s_dd017cf1a55dbd::t_2ba9cd8485dc51 24-28
+  s_dd017cf1a55dbd::t_e7630417ff1928 1-2,7-23,29-103
+.agents/skills/surgical-refactor/examples/remove-unused-import.cjs
+  s_dd017cf1a55dbd::t_baae3535be29d4 1-23
+deepclaude.sh
+  s_dd017cf1a55dbd::t_658075a325a6cb 148-156,173-176,181,216-217,228,237-238,241,257
+  s_dd017cf1a55dbd::t_d4635fd17ac358 3,17,19-61,69,86,100-102,104,108-124,136,280,286,290,299-301,334,340,344,350-352
+package.json
+  s_dd017cf1a55dbd::t_64cca11f665032 1-16
+.github/workflows/surgical-refactor.yml
+  s_dd017cf1a55dbd::t_1409a96c1e3142 1-42
+.agents/skills/surgical-refactor/tooling/requirements.txt
+  s_dd017cf1a55dbd::t_bf4761756255e6 2
+  s_dd017cf1a55dbd::t_468b2fa1e62251 1
+  s_dd017cf1a55dbd::t_cb75eb2cd1e4dd 3-5
+  s_dd017cf1a55dbd::t_1c0828459041a8 6-1129
+proxy/model-proxy.js
+  s_af578218eed7ee::t_a169a7ea159d6c 216,354,362,365,368,373,434,495,503-504,637-647,650-668,670-688,732-733
+  s_af578218eed7ee::t_4f1159c518d1d4 104-113
+  s_af578218eed7ee::t_dd0f879f60b421 1372-1378
+  s_af578218eed7ee::t_3c6b85bcd98df4 1461-1464
+  s_af578218eed7ee::t_fa60fdf82374eb 1118,1151,1211,1480-1501
+  s_af578218eed7ee::t_0a951ed78a20bc 32,356,375,422,506,508-526,533,535-572,575-629,633-636,648-649,689,738
+  s_af578218eed7ee::t_82dafaa1047d63 1388
+  s_af578218eed7ee::t_9029ca5d7e8b82 789-790
+  s_dd017cf1a55dbd::t_c25ae6c20b9666 753-755,933-934
+  s_af578218eed7ee::t_a0e90b3a050007 1380
+  s_af578218eed7ee::t_87f3e793980fb3 1147,1153,1179,1446-1460
+  s_dd017cf1a55dbd::t_f7f41a5ccc897d 12-19,378-410,412-416,750,920-931,937-948,950,957-958,972,975-976,979-981,987,996-998,1000-1005,1010-1022,1028-1036,1038-1049,1051-1052,1055,1058-1059,1068,1076,1082,1097,1189,1195
+  s_af578218eed7ee::t_8e5c14042dce8c 178-183
+  s_af578218eed7ee::t_342b48de6597d4 1401-1408,1410
+  s_af578218eed7ee::t_2178fe10813dc9 424,428,476,483,496,691-709,711-713,716-720
+  s_dd017cf1a55dbd::t_658075a325a6cb 74,76,79-81,223,444-447,449-466,469-475,792-793,797-798,808-811,820-824,953,1170,1321,1383
+  s_af578218eed7ee::t_8c2275587c34e3 1365
+  s_af578218eed7ee::t_280be8e6840d0a 149-155
+  s_af578218eed7ee::t_5bdb58c95c6ce5 527-532,534
+  s_af578218eed7ee::t_a2e74effa4351b 188-209,494,502
+  s_af578218eed7ee::t_92dc3e93cac499 723
+  s_af578218eed7ee::t_4008b0384ab489 1261
+  s_af578218eed7ee::t_7c283afb23b518 120
+  s_dd017cf1a55dbd::t_f8f54f6fb22fe7 5,94,121-122,170-177,221,1234-1238
+  s_af578218eed7ee::t_17009ddfb3cb73 1263,1279,1289,1299,1301-1319,1326-1327,1350
+  s_af578218eed7ee::t_b608adb7d7a1fa 98-103
+  s_af578218eed7ee::t_4fe31ac5a43610 1409
+  s_dd017cf1a55dbd::t_9ac9a6b19ec29b 9-11
+  s_af578218eed7ee::t_fc4f4e21894114 29-31
+  s_af578218eed7ee::t_40a7183f41f317 210-211
+  s_af578218eed7ee::t_36bd539e9a3e3a 214-215
+  s_af578218eed7ee::t_5666ddcd3d465f 351-353
+  s_af578218eed7ee::t_a2aae7c16721ad 355
+  s_af578218eed7ee::t_fd97170b313906 357-361
+  s_af578218eed7ee::t_79d599dbfff2fb 363-364
+  s_af578218eed7ee::t_72e46b73474092 366-367
+  s_af578218eed7ee::t_3f9c5264c2480f 369-372
+  s_af578218eed7ee::t_b242961ed10dce 374
+  s_dd017cf1a55dbd::t_31674c38c14fe2 417
+  s_af578218eed7ee::t_0b6a37d297f942 421
+  s_af578218eed7ee::t_f2f0a4d4388421 425-427
+  s_af578218eed7ee::t_2542263708d40a 429-433
+  s_dd017cf1a55dbd::t_e99563762ba446 441-443
+  s_af578218eed7ee::t_611303fa90c23e 477-482
+  s_af578218eed7ee::t_cfd654328ec652 484-486,491-493
+  s_af578218eed7ee::t_d8b93bf54e6c5f 497-501
+  s_af578218eed7ee::t_7446c50dbec3fb 505
+  s_af578218eed7ee::t_5e05d5a712c41a 507
+  s_af578218eed7ee::t_30bcecc71360e5 724-726,729-731
+  s_af578218eed7ee::t_66f6d4415841f7 734-737
+  s_dd017cf1a55dbd::t_911c611ff99b17 747-749
+  s_dd017cf1a55dbd::t_05fe015519ac5d 751
+  s_dd017cf1a55dbd::t_d51010f382d50f 932
+  s_af578218eed7ee::t_e0a361baeeaa93 1115-1117
+  s_af578218eed7ee::t_874a829b963846 1144-1146
+  s_af578218eed7ee::t_071fc4bae69c08 1148-1150
+  s_af578218eed7ee::t_7a7012ec33617a 1152
+  s_af578218eed7ee::t_19866edf7bec45 1154
+  s_dd017cf1a55dbd::t_1984055cd7ae35 1190-1194
+  s_dd017cf1a55dbd::t_3c4bea3521f508 1196-1198
+  s_af578218eed7ee::t_b9ad47ebf96066 1209-1210
+  s_af578218eed7ee::t_acc068e9f5e801 1258-1260
+  s_af578218eed7ee::t_249d1e417d2b81 1262
+  s_af578218eed7ee::t_04e239c70b48e0 1264-1266,1276-1278
+  s_af578218eed7ee::t_e2512de14df253 1280-1282,1286-1288
+  s_af578218eed7ee::t_dc0afbe375568c 1290-1292,1296-1298
+  s_af578218eed7ee::t_85e4945d51f6ab 1300
+  s_af578218eed7ee::t_c4af86cfcf6878 1328-1330,1347-1349
+  s_af578218eed7ee::t_32ed2b5845707d 1351
+  s_af578218eed7ee::t_06974a7bf9bc01 1389-1391
+  s_dd017cf1a55dbd::t_2cacc600ebc2e0 21-28,36-45,59-70,91,115-116,133,299,321,342-350,376-377,436-440,487-490,727-728,740-746,769-773,783,853,1111,1114,1120,1127,1143,1175-1177,1201-1205,1243-1257,1267-1275,1283-1285,1293-1295,1320,1322-1325,1331-1346,1354-1359,1361-1363,1392-1397,1431
+proxy/model-proxy.test.js
+  s_af578218eed7ee::t_59ac82180391af 12
+  s_af578218eed7ee::t_01f958b17c2f6e 115,174,182,189,217,221,223,227-231,236,241-242,265,269,271,275-276,278-279,285,290-291,325-330,335-336,356,358,368-369,371-373,380-381,412,414,422-423,425-427,434-435,461,464,470-471,473-475,481-482,506,508,520-521,523-525,532-533,556,558,569-570,572-574,581-582,627,893-1103
+  s_af578218eed7ee::t_2262d927ef9fb3 105,107-109,113-114,129,142,145,158,170,181,184,188,206,210,213,215,219,258,261,263,267,608-609,617-618,626,645-838,840-892
+  s_af578218eed7ee::t_19e05072ff959e 7-11,14-18
+  s_dd017cf1a55dbd::t_82e55a029e59ec 96,102,116,123,125,137,153,159,165,175,177,198-199,207,211-212,214,216,224-225,237,239-240,248-249,251-255,259-260,262,264,272-273,286,288-289,297-298,300-304,313-314,321,323,331,333-334,342,347-351,355,357,365-366,375,378-379,389,400-401,404-407,411,413,419-420,429,432-433,443,448,451-454,460,462,467-468,476,479-480,490,495,498-501,505,507,517-518,527,530-531,541,545,548-551,555,557,566-567,576,579-580,590,597,600-603,606,628,636,639,641,644,1104-1150,1152-1173
+  s_af578218eed7ee::t_24668c9553eedc 839
+  s_dd017cf1a55dbd::t_77b60e1f219e93 20-93
+  s_dd017cf1a55dbd::t_c25ae6c20b9666 1151
+  s_af578218eed7ee::t_737c1ec1e780e2 4-6
+  s_af578218eed7ee::t_e8c108fb7f88df 13
+  s_dd017cf1a55dbd::t_ec14198ace5ff5 94-95
+  s_dd017cf1a55dbd::t_7d16a402b14b78 97-101
+  s_af578218eed7ee::t_7e01bc184def05 106
+  s_af578218eed7ee::t_43102230362f06 110-112
+  s_dd017cf1a55dbd::t_f2b7ce62fbf1c8 117-122
+  s_dd017cf1a55dbd::t_142d15ecb4f5cd 124
+  s_af578218eed7ee::t_9201d450e64dcf 143-144
+  s_dd017cf1a55dbd::t_11192a508c853b 160-164
+  s_af578218eed7ee::t_33e9b3928c7422 171-173
+  s_dd017cf1a55dbd::t_ee0c8deeabd30e 176
+  s_af578218eed7ee::t_a583b15abf0ead 183
+  s_af578218eed7ee::t_7d6372ee739880 185-187
+  s_af578218eed7ee::t_893f7e93c649d8 218
+  s_af578218eed7ee::t_a8513a76f85a78 220
+  s_af578218eed7ee::t_3d6dec52522bb2 222
+  s_af578218eed7ee::t_2c76e50746ef33 232-235
+  s_dd017cf1a55dbd::t_a63ee8cf73c5cd 238
+  s_dd017cf1a55dbd::t_5ac1bf1638d9c4 250
+  s_af578218eed7ee::t_38ccfac3930eb0 266
+  s_af578218eed7ee::t_28bcf1accf43a9 268
+  s_af578218eed7ee::t_a79779bf93ef3f 270
+  s_af578218eed7ee::t_18f504689c44c1 277
+  s_af578218eed7ee::t_123dfe98b9f5e2 280-284
+  s_dd017cf1a55dbd::t_7b8b26a870ad9e 287
+  s_dd017cf1a55dbd::t_b9a438638451e8 299
+  s_dd017cf1a55dbd::t_4fd898e54472c1 305-307,310-312
+  s_dd017cf1a55dbd::t_e94879d2a00c31 315-320
+  s_dd017cf1a55dbd::t_eafe9e5ec02002 322
+  s_dd017cf1a55dbd::t_e9735f5a84a13e 332
+  s_dd017cf1a55dbd::t_496178a3e7cbba 343-346
+  s_dd017cf1a55dbd::t_43ce430bf5607f 352-354
+  s_af578218eed7ee::t_7a954975f449a1 370
+  s_dd017cf1a55dbd::t_ce6b49bef99d7f 376-377
+  s_dd017cf1a55dbd::t_5f8a64c5a1b2c3 390-392,397-399
+  s_dd017cf1a55dbd::t_b57e384bbd1a70 402-403
+  s_dd017cf1a55dbd::t_5d925b35abddaf 408-410
+  s_af578218eed7ee::t_33a85ab5656896 424
+  s_dd017cf1a55dbd::t_321b4afe93464a 430-431
+  s_dd017cf1a55dbd::t_ca14b60c927800 444-447
+  s_dd017cf1a55dbd::t_af5eae20d42297 449-450
+  s_dd017cf1a55dbd::t_f0750a3899b726 455-459
+  s_af578218eed7ee::t_a32d488cc2327b 472
+  s_dd017cf1a55dbd::t_88a47ee1ed9754 477-478
+  s_dd017cf1a55dbd::t_b68fd7ab7d8650 491-494
+  s_dd017cf1a55dbd::t_4f78c026d466e8 496-497
+  s_dd017cf1a55dbd::t_78040882b8b4a2 502-504
+  s_af578218eed7ee::t_810d41f43e81ca 522
+  s_dd017cf1a55dbd::t_d8b57b9a7ed2bf 528-529
+  s_dd017cf1a55dbd::t_ea1c71facc327f 542-544
+  s_dd017cf1a55dbd::t_da0554dd47f508 546-547
+  s_dd017cf1a55dbd::t_0110fac1135e0b 552-554
+  s_af578218eed7ee::t_13b7800fd626b1 571
+  s_dd017cf1a55dbd::t_16648f4734b023 577-578
+  s_dd017cf1a55dbd::t_ffe75c941ca228 591-596
+  s_dd017cf1a55dbd::t_4787177dbe2f3e 598-599
+  s_dd017cf1a55dbd::t_3dda306ab0b7d9 604-605
+  s_af578218eed7ee::t_12e6c2a6bdaba1 610-612,614-616
+  s_af578218eed7ee::t_776049ec14b5a7 619-621,623-625
+  s_dd017cf1a55dbd::t_4d15d1e16a6f7b 629-631,633-635
+  s_dd017cf1a55dbd::t_2c13a6c4daf694 637-638
+  s_dd017cf1a55dbd::t_b539eeea74593a 640
+  s_dd017cf1a55dbd::t_dc7d9a7dfdc087 642-643
+  s_dd017cf1a55dbd::t_fdb3d78e7b07b2 1-3,19,103-104,126-128,130-136,138-141,146-152,154-157,166-169,178-180,190-197,200-205,208-209,226,243-247,256-257,274,292-296,308-309,324,337-341,359-364,367,374,382-388,393-396,415-418,421,428,436-442,463,465-466,469,483-489,509-516,519,526,534-540,559-565,568,575,583-589,607,613,622,632
+README.md
+  s_dd017cf1a55dbd::t_e7630417ff1928 44,87-101
+  s_dd017cf1a55dbd::t_677da40b7a188f 3-5
+  s_dd017cf1a55dbd::t_7a1dd11dd4fdc3 28-32
+  s_dd017cf1a55dbd::t_6c7cd532be49cb 56,109,127,130-131,183,185,192-194,199,202-212,218-220,238-271,286-292,323,327,372,378
+  s_dd017cf1a55dbd::t_82e55a029e59ec 53-55,57-86,102
+  s_dee0e6e435bc04::t_766fd8ed5d9cd0 6,39,41,46,385,392,399
+.surgical-refactor/baseline.json
+  s_dd017cf1a55dbd::t_e1d386551ba6e9 1-124
+.agents/skills/surgical-refactor/tooling/package-lock.json
+  s_dd017cf1a55dbd::t_1830919074df4a 1-5020
+.claude/skills/surgical-refactor
+  s_dd017cf1a55dbd::t_5d112d97661d7c 1
+proxy/start-proxy.js
+  s_dd017cf1a55dbd::t_5dc1c6e5eec5e7 7,14-16,32
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "824fa8bee2349b10aa357631a59ad23a18c6ec92",
+  "prompts": {},
+  "sessions": {
+    "s_af578218eed7ee": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_f39869d33ffeJl3BFydlAvCpDB",
+        "model": "muse-spark-1.3-contributor-free"
+      },
+      "human_author": "Gustavo Oliveira <gustavo@groliveira.com.br>"
+    },
+    "s_dd017cf1a55dbd": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019ffdcc-cd64-7420-a4a2-86164053388a",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Gustavo Oliveira <gustavo@groliveira.com.br>"
+    },
+    "s_dee0e6e435bc04": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "bba11070-8321-43af-a931-0f5cdab3d92c",
+        "model": "deepseek-flash"
+      },
+      "human_author": "Gustavo Oliveira <gustavo@groliveira.com.br>"
+    }
+  }
+}
