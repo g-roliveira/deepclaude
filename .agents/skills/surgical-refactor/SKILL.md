@@ -85,8 +85,9 @@ node .agents/skills/surgical-refactor/scripts/refactor.mjs mutation
 ```
 
 Mutation deve usar caminhos críticos sobreviventes e a suíte real, em sandbox.
-Revise o range e comando de teste antes de executar. O perfil inicial muta somente
-`buildUpstreamPath`; não extrapole o resultado para o proxy inteiro. Sobreviventes,
+Revise o range e comando de teste antes de executar. O perfil atual muta
+`buildUpstreamPath` e guardas de provider na inicialização; não extrapole o resultado
+para o proxy inteiro. Sobreviventes,
 NoCoverage e timeout exigem análise. O perfil do projeto exige score de 90% no
 range configurado; adapte o gate após medir o baseline. Não exclua mutantes só para
 aumentar score. Passar compilação não prova equivalência semântica.

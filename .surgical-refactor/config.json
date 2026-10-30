@@ -8,11 +8,19 @@
   "baseline": ".surgical-refactor/baseline.json",
   "policy": {
     "mode": "enforce",
-    "removedFeature": "Native Windows launcher and project-owned Windows tooling branches",
+    "removedFeature": "Native Windows support and all LLM providers except DeepSeek and Anthropic",
     "forbiddenModules": [],
     "forbiddenSymbols": [],
     "forbiddenPaths": ["deepclaude.ps1"],
     "forbiddenText": [
+      { "text": "openrouter", "paths": ["deepclaude.sh", "proxy/model-proxy.js", "proxy/start-proxy.js"] },
+      { "text": "minimax", "paths": ["deepclaude.sh", "proxy/model-proxy.js", "proxy/start-proxy.js"] },
+      { "text": "fireworks", "paths": ["deepclaude.sh", "proxy/model-proxy.js", "proxy/start-proxy.js"] },
+      { "text": "OPENROUTER_API_KEY", "paths": ["deepclaude.sh", "proxy/model-proxy.js", "proxy/start-proxy.js", "package.json"] },
+      { "text": "FIREWORKS_API_KEY", "paths": ["deepclaude.sh", "proxy/model-proxy.js", "proxy/start-proxy.js", "package.json"] },
+      { "text": "MODEL_OVERRIDE", "paths": ["deepclaude.sh"] },
+      { "text": "modelOverride", "paths": ["proxy/model-proxy.js", "proxy/start-proxy.js"] },
+      { "text": "CHEAPCLAUDE_MODEL", "paths": ["proxy/start-proxy.js"] },
       { "text": "win32", "paths": ["deepclaude.sh", ".agents/skills/surgical-refactor/scripts"] },
       { "text": "powershell", "paths": ["deepclaude.sh", "proxy/model-proxy.js", "proxy/start-proxy.js", ".agents/skills/surgical-refactor/scripts"] },
       { "text": "semgrep.exe", "paths": [".agents/skills/surgical-refactor/scripts"] },
@@ -25,8 +33,8 @@
     { "name": "proxy-syntax", "command": ["node", "--check", "proxy/model-proxy.js"], "required": true },
     { "name": "launcher-syntax", "command": ["node", "--check", "proxy/start-proxy.js"], "required": true },
     { "name": "bash-syntax", "command": ["bash", "-n", "deepclaude.sh"], "required": true },
-    { "name": "regressions", "command": ["node", "--test", "proxy/model-proxy.test.js", "proxy/deepseek-compat.test.js", "proxy/upstream-path.test.js", "proxy/platform-contract.test.js"], "required": true },
-    { "name": "coverage", "command": ["node", "--experimental-test-coverage", "--test", "proxy/model-proxy.test.js", "proxy/deepseek-compat.test.js", "proxy/upstream-path.test.js", "proxy/platform-contract.test.js"], "required": true },
+    { "name": "regressions", "command": ["node", "--test", "proxy/model-proxy.test.js", "proxy/deepseek-compat.test.js", "proxy/upstream-path.test.js", "proxy/platform-contract.test.js", "proxy/provider-contract.test.js"], "required": true },
+    { "name": "coverage", "command": ["node", "--experimental-test-coverage", "--test", "proxy/model-proxy.test.js", "proxy/deepseek-compat.test.js", "proxy/upstream-path.test.js", "proxy/platform-contract.test.js", "proxy/provider-contract.test.js"], "required": true },
     { "name": "skill-tests", "command": ["node", "--test", ".agents/skills/surgical-refactor/tests/refactor.test.mjs"], "required": true }
   ]
 }

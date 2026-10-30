@@ -2,9 +2,10 @@
 
 Implementação reutilizável para remoções de funcionalidades/providers, com
 discovery, baseline, remoção por AST, verificação, CI e relatório de evidências.
-**Nenhum provider foi removido nesta entrega.** O exemplo pedido é DeepSeek, não
-GPT-6. A policy atual está em `enforce` para impedir a reintrodução de suporte
-nativo Windows; nenhum provider foi removido.
+A instalação da skill não removeu providers por conta própria. Em tarefas
+posteriores autorizadas, foram removidos o suporte nativo Windows e os providers
+além de DeepSeek e Anthropic. A policy está em `enforce` para ambas as remoções.
+Veja [o relatório dos providers](provider-removal.md).
 
 ## Descoberta e escolhas
 
@@ -63,7 +64,7 @@ bridge remoto não são removidos por simples correspondência textual.
 
 ```bash
 npm run refactor:setup
-npm run refactor:inventory -- --target openrouter
+npm run refactor:inventory -- --target deepseek
 npm run refactor:analyze
 npm run refactor:selftest
 npm run refactor:verify
@@ -90,7 +91,8 @@ O helper não classifica ownership nem calcula um call graph interprocedural.
 ## Baseline e validação da instalação original da skill
 
 Os números e checks desta seção registram o estado anterior à remoção de suporte
-nativo Windows. Para a verificação atual, consulte [a remoção](windows-removal.md).
+nativo Windows. Para a verificação atual, consulte [os providers](provider-removal.md)
+e [a remoção Windows](windows-removal.md).
 
 - Antes: 52 regressões existentes aprovadas, sem falhas preexistentes observadas.
 - Depois: 53 regressões do proxy (uma caracterização nova) e 13 testes da skill.
@@ -124,8 +126,11 @@ linha, score de mutação e equivalência semântica são medidas diferentes.
 
 ## Guardas de remoção
 
-Atualmente `policy.mode=enforce` impede a reintrodução do launcher nativo removido
-e de caminhos exclusivos de plataforma. Nenhum provider está proibido. Para outra remoção
+Atualmente `policy.mode=enforce` impede a reintrodução do launcher nativo removido,
+de caminhos exclusivos de plataforma e dos providers aposentados. Os nomes destes
+podem aparecer em testes negativos e relatórios históricos; a proibição textual
+tem escopo nos três arquivos de implementação, além dos testes de registros/CLI.
+Para outra remoção
 real, configurar `enforce`, `removedFeature`, módulos/símbolos/paths proibidos e
 referências de configuração nos caminhos reais. Imports dinâmicos literais,
 reexports e pacotes declarados são verificados; imports computados requerem
@@ -147,5 +152,5 @@ executados localmente; uma execução hospedada no GitHub ainda depende de commi
   como não aplicável/não disponível, não como testes aprovados.
 - Os testes do proxy usam upstream simulado; serviços reais e regressões de
   terceiros não foram certificados nesta entrega.
-- Testes de policy exercitam os guardas em fixtures; a proibição de um provider
-  real só fica ativa quando uma remoção for implementada e a policy for armada.
+- Os testes de policy exercitam guardas em fixtures; a policy ativa também proíbe
+  referências reais aos providers removidos nos entry points de produção.

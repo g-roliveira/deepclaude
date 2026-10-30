@@ -3,17 +3,13 @@ import { startModelProxy } from './model-proxy.js';
 
 const BACKEND_DEFS = {
     deepseek: { url: 'https://api.deepseek.com/anthropic', keyEnv: 'DEEPSEEK_API_KEY' },
-    openrouter: { url: 'https://openrouter.ai/api/v1', keyEnv: 'OPENROUTER_API_KEY' },
-    minimax: { url: 'https://openrouter.ai/api/v1', keyEnv: 'OPENROUTER_API_KEY' },
-    fireworks: { url: 'https://api.fireworks.ai/inference/v1', keyEnv: 'FIREWORKS_API_KEY' },
 };
 
-// Legacy mode: start-proxy.js <targetUrl> <apiKey> [defaultMode] (used by deepclaude.sh/ps1)
-const targetUrl = process.argv[2] || process.env.CHEAPCLAUDE_TARGET_URL;
-const apiKey = process.argv[3] || process.env.CHEAPCLAUDE_API_KEY;
-const requestedDefaultMode = process.argv[4] || process.env.CHEAPCLAUDE_DEFAULT_MODE;
-const legacyDefaultMode = requestedDefaultMode === 'op' ? 'openrouter' : requestedDefaultMode;
-const modelOverride = process.argv[5] || process.env.CHEAPCLAUDE_MODEL;
+// Positional mode is used by the Bash launcher. Flags belong to standalone mode.
+const positional = process.argv[2] && !process.argv[2].startsWith('-');
+const targetUrl = (positional ? process.argv[2] : null) || process.env.CHEAPCLAUDE_TARGET_URL;
+const apiKey = (positional ? process.argv[3] : null) || process.env.CHEAPCLAUDE_API_KEY;
+const legacyDefaultMode = (positional ? process.argv[4] : null) || process.env.CHEAPCLAUDE_DEFAULT_MODE;
 
 if (targetUrl && apiKey) {
     // Legacy single-backend mode
@@ -29,7 +25,6 @@ if (targetUrl && apiKey) {
         apiKey,
         backends: hasBackends ? backends : undefined,
         defaultMode: legacyDefaultMode || undefined,
-        modelOverride: modelOverride || null,
     });
     console.log(port);
 } else {

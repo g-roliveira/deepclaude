@@ -44,37 +44,10 @@ const MODEL_REMAP = {
         'claude-sonnet-4-5-20250929': 'deepseek-flash',
         'claude-haiku-4-5-20251001':  'deepseek-flash',
     },
-    openrouter: {
-        _default: { fable: 'deepseek/deepseek-v4-pro', opus: 'deepseek/deepseek-v4-pro', sonnet: 'deepseek/deepseek-v4-flash', haiku: 'deepseek/deepseek-v4-flash' },
-        'claude-fable-5':     'deepseek/deepseek-v4-pro',
-        'claude-opus-5':      'deepseek/deepseek-v4-pro',
-        'claude-opus-4-6':    'deepseek/deepseek-v4-pro',
-        'claude-opus-4-7':    'deepseek/deepseek-v4-pro',
-        'claude-opus-4-8':    'deepseek/deepseek-v4-pro',
-        'claude-sonnet-5':    'deepseek/deepseek-v4-flash',
-        'claude-sonnet-4-6':  'deepseek/deepseek-v4-flash',
-        'claude-sonnet-4-5-20250929': 'deepseek/deepseek-v4-flash',
-        'claude-haiku-4-5-20251001':  'deepseek/deepseek-v4-flash',
-    },
-    minimax: {
-        _default: { fable: 'minimax/minimax-m3:free', opus: 'minimax/minimax-m3:free', sonnet: 'minimax/minimax-m3:free', haiku: 'minimax/minimax-m3:free' },
-        'claude-fable-5':     'minimax/minimax-m3:free',
-        'claude-opus-5':      'minimax/minimax-m3:free',
-        'claude-opus-4-6':    'minimax/minimax-m3:free',
-        'claude-opus-4-7':    'minimax/minimax-m3:free',
-        'claude-opus-4-8':    'minimax/minimax-m3:free',
-        'claude-sonnet-5':    'minimax/minimax-m3:free',
-        'claude-sonnet-4-6':  'minimax/minimax-m3:free',
-        'claude-sonnet-4-5-20250929': 'minimax/minimax-m3:free',
-        'claude-haiku-4-5-20251001':  'minimax/minimax-m3:free',
-    },
 };
 
 const PRICING_PER_M = {
     deepseek:       { input: 0.30,  output: 1.20, cacheRead: 0.006 },
-    openrouter:     { input: 0.44,  output: 0.87 },
-    minimax:        { input: 0,     output: 0 },
-    fireworks:      { input: 1.74,  output: 3.48 },
     anthropic:      { input: 3.00,  output: 15.00 },
     // Flash peak prices: conservative estimate, not an invoice. Off-peak and
     // Chinese public holidays can lower actual billing; search/fetch is extra.
@@ -84,7 +57,7 @@ const PRICING_PER_M = {
 
 /**
  * Transform stream that intercepts SSE events and injects missing `usage`
- * fields. DeepSeek/OpenRouter may omit `usage` in message_start or
+ * fields. DeepSeek may omit `usage` in message_start or
  * message_delta, which crashes Claude Code ("$.input_tokens" is undefined).
  */
 class UsageNormalizer extends Transform {
@@ -134,14 +107,6 @@ class UsageNormalizer extends Transform {
         try {
             const d = JSON.parse(m[1]);
             let changed = false;
-
-            // Strip redacted_thinking blocks that OpenRouter emits out-of-order
-            // for non-Claude reasoning models. These break the SSE parser.
-            if (d.type === 'content_block_start' || d.type === 'content_block_delta') {
-                if (d.content_block?.type === 'redacted_thinking') {
-                    return ''; // drop the event entirely
-                }
-            }
 
             if (d.type === 'message_start' && d.message) {
                 if (d.message.usage) {
@@ -234,7 +199,6 @@ function normalizeJsonBody(buf) {
         if (obj.type === 'message' && !obj.usage) {
             obj.usage = { input_tokens: 0, output_tokens: 0 };
         }
-        stripRedactedThinking(obj);
         return Buffer.from(JSON.stringify(obj));
     } catch { /* not JSON */ }
     return buf;
@@ -280,18 +244,6 @@ function makeTitleGenResponse() {
         stop_reason: 'end_turn',
         usage: { input_tokens: 10, output_tokens: 2 },
     };
-}
-
-/**
- * Strip redacted_thinking blocks that OpenRouter emits out-of-order
- * for non-Claude reasoning models. These break the SSE parser.
- */
-function stripRedactedThinking(parsed) {
-    if (!parsed?.content) return;
-    if (!Array.isArray(parsed.content)) return;
-    parsed.content = parsed.content.filter(
-        block => block.type !== 'redacted_thinking'
-    );
 }
 
 // Recurses into tool_result.content[] because Claude Code's Read tool
@@ -441,19 +393,15 @@ export function prepareDeepSeekVisionRequest(parsed) {
 
     const originalModel = parsed.model;
     parsed.model = DEEPSEEK_VISION_MODEL;
-    prepareBackendOptions(parsed, true);
+    prepareBackendOptions(parsed);
     delete parsed.context_management;
     return { originalModel, visionModel: DEEPSEEK_VISION_MODEL };
 }
 
 // Preserve native server tools and reasoning history. Only direct DeepSeek
 // accepts these reasoning controls under its current Anthropic contract.
-export function prepareBackendOptions(parsed, isDeepSeek) {
+export function prepareBackendOptions(parsed) {
     delete parsed.context_management;
-    if (!isDeepSeek) {
-        delete parsed.thinking;
-        return;
-    }
     if (parsed.thinking) {
         if (parsed.thinking.type === 'adaptive') parsed.thinking = { type: 'enabled' };
         else delete parsed.thinking.budget_tokens;
@@ -474,7 +422,7 @@ export function estimateInputTokens(parsed) {
 }
 
 /**
- * Anthropic-compatible backends (DeepSeek, OpenRouter, ...) validate tool
+ * DeepSeek validates tool
  * `input_schema` with Python-style regex, which rejects the Unicode property
  * escapes (`\p{...}`) that Claude Code puts in `pattern` keywords — e.g. the
  * Artifact tool — returning 400 "not a regex". Anthropic tolerates them.
@@ -743,7 +691,6 @@ export function startModelProxy({
     startPort = 3200,
     backends,
     defaultMode,
-    modelOverride = null,
     upstreamRequest = httpsRequest,
     terminalGraceMs = 5_000,
     semanticStallTimeoutMs = semanticStallTimeoutFromEnv(),
@@ -752,35 +699,38 @@ export function startModelProxy({
     return new Promise((resolve, reject) => {
         // Launchers pass short backend aliases; use canonical names for model
         // remapping, pricing, and reasoning controls as well as live switching.
-        defaultMode = { ds: 'deepseek', or: 'openrouter', op: 'openrouter', mm: 'minimax', fw: 'fireworks' }[defaultMode] || defaultMode;
+        defaultMode = defaultMode === 'ds' ? 'deepseek' : defaultMode;
+        if (defaultMode && !['deepseek', 'anthropic'].includes(defaultMode)) {
+            throw new Error(`Unsupported backend: ${defaultMode}. Use deepseek or anthropic`);
+        }
         const initialTarget = new URL(targetUrl);
-        const initialBearer = targetUrl.includes('openrouter') || targetUrl.includes('fireworks');
 
         const allBackends = {};
         if (backends) {
             for (const [name, cfg] of Object.entries(backends)) {
+                if (name !== 'deepseek') throw new Error(`Unsupported backend configuration: ${name}`);
                 allBackends[name] = {
                     target: new URL(cfg.url),
                     apiKey: cfg.apiKey,
-                    useBearer: cfg.url.includes('openrouter') || cfg.url.includes('fireworks'),
                 };
             }
         }
         const deepseekVisionBackend = allBackends.deepseek?.apiKey
             ? allBackends.deepseek
             : initialTarget.hostname.endsWith('deepseek.com') && apiKey
-                ? { target: initialTarget, apiKey, useBearer: false }
+                ? { target: initialTarget, apiKey }
                 : null;
         const initialName = defaultMode || (backends ? 'anthropic' : null);
         const startBackend = initialName && initialName !== 'anthropic' && allBackends[initialName];
+        if (initialName === 'deepseek' && !(startBackend ? startBackend.apiKey : apiKey)) {
+            throw new Error('API key not set for deepseek');
+        }
 
         const state = {
             mode: initialName || '_single',
             target: startBackend ? startBackend.target : initialTarget,
             apiKey: startBackend ? startBackend.apiKey : apiKey,
-            useBearer: startBackend ? startBackend.useBearer : initialBearer,
-            hadNonAnthropicSession: !!startBackend,
-            modelOverride: defaultMode === 'openrouter' ? modelOverride : null,
+            hadNonAnthropicSession: initialName !== 'anthropic',
         };
 
         let reqCount = 0;
@@ -833,12 +783,12 @@ export function startModelProxy({
         }
 
         function switchMode(name) {
+            name = name === 'ds' ? 'deepseek' : name;
             if (name === 'anthropic') {
                 const prev = state.mode;
                 state.mode = 'anthropic';
                 state.target = new URL(ANTHROPIC_FALLBACK);
                 state.apiKey = null;
-                state.useBearer = false;
                 return { mode: 'anthropic', previous: prev };
             }
             const b = allBackends[name];
@@ -848,9 +798,7 @@ export function startModelProxy({
             state.mode = name;
             state.target = b.target;
             state.apiKey = b.apiKey;
-            state.useBearer = b.useBearer;
             state.hadNonAnthropicSession = true;
-            state.modelOverride = name === 'openrouter' ? state.modelOverride : null;
             return { mode: name, previous: prev };
         }
 
@@ -889,13 +837,13 @@ export function startModelProxy({
                     });
                     clientReq.on('end', () => {
                         const body = Buffer.concat(chunks).toString();
-                        const m = body.match(/backend=([a-z]+)/);
-                        if (!m) {
+                        const backend = new URLSearchParams(body).get('backend');
+                        if (!backend) {
                             clientRes.writeHead(400, { 'content-type': 'application/json' });
                             clientRes.end(JSON.stringify({ error: 'Missing backend= in body' }));
                             return;
                         }
-                        const result = switchMode(m[1]);
+                        const result = switchMode(backend);
                         if (result.error) {
                             clientRes.writeHead(400, { 'content-type': 'application/json' });
                             clientRes.end(JSON.stringify(result));
@@ -1000,14 +948,13 @@ export function startModelProxy({
                 const lastMessageHasImage = lastMsg?.role === 'user'
                     && containsImageBlock([lastMsg]);
                 const hasImage = state.mode !== 'anthropic'
-                    && state.mode !== 'minimax'
                     && !!deepseekVisionBackend
                     && lastMessageHasImage;
 
                 const isAnthropicMode = state.mode === 'anthropic';
                 const isModelCall = !isAnthropicMode && isMessagesPath;
 
-                if (isModelCall && lastMessageHasImage && state.mode !== 'minimax' && !deepseekVisionBackend) {
+                if (isModelCall && lastMessageHasImage && !deepseekVisionBackend) {
                     console.error(`[MODEL-PROXY] #${reqId} image rejected: DEEPSEEK_API_KEY is not available for native vision routing`);
                     clientRes.writeHead(503, { 'content-type': 'application/json' });
                     clientRes.end(JSON.stringify({
@@ -1068,11 +1015,7 @@ export function startModelProxy({
                     if (isModelCall || routeDeepSeekFiles) {
                         delete headers['authorization'];
                         delete headers['x-api-key'];
-                        if (state.useBearer) {
-                            headers['authorization'] = `Bearer ${state.apiKey}`;
-                        } else {
-                            headers['x-api-key'] = state.apiKey;
-                        }
+                        headers['x-api-key'] = state.apiKey;
                         if (routeDeepSeekFiles) headers['anthropic-beta'] = withFilesBeta(headers['anthropic-beta']);
                     }
 
@@ -1108,14 +1051,10 @@ export function startModelProxy({
                 }
 
                 // Remap Anthropic model names to backend-specific names
-                if (isModelCall && !hasImage && (state.modelOverride || MODEL_REMAP[state.mode])) {
+                if (isModelCall && !hasImage && MODEL_REMAP[state.mode]) {
                     try {
                         const p = JSON.parse(body);
                         let mapped;
-                        if (state.modelOverride && state.mode === 'openrouter') {
-                            mapped = state.modelOverride;
-                            console.error(`[MODEL-PROXY] #${reqId} custom model: ${p.model} → ${mapped}`);
-                        }
                         const remap = MODEL_REMAP[state.mode];
                         if (!mapped && remap) mapped = remap[p.model];
                         if (!mapped) {
@@ -1167,7 +1106,7 @@ export function startModelProxy({
                 if (isModelCall) {
                     try {
                         const p = JSON.parse(body);
-                        prepareBackendOptions(p, dest.hostname === 'api.deepseek.com' || state.mode === 'deepseek' || hasImage);
+                        prepareBackendOptions(p);
                         body = Buffer.from(JSON.stringify(p));
                     } catch { /* pass through */ }
                 }

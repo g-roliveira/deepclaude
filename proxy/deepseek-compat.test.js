@@ -163,7 +163,7 @@ test('vision enforces 600 images per request and 32 MiB per inline image', () =>
 test('every documented effort maps correctly and disabled thinking stays disabled', () => {
     for (const [requested, expected] of Object.entries({ minimal: 'low', low: 'low', medium: 'high', high: 'high', xhigh: 'high', max: 'max', ultra: 'max' })) {
         const body = { thinking: { type: 'disabled' }, output_config: { effort: requested } };
-        prepareBackendOptions(body, true);
+        prepareBackendOptions(body);
         assert.deepEqual(body.thinking, { type: 'disabled' });
         assert.deepEqual(body.output_config, { effort: expected });
     }
@@ -242,7 +242,7 @@ test('count_tokens rejects invalid JSON rather than reporting zero and estimates
 test('Bash retains documented compaction headroom', () => {
     const bash = readFileSync(new URL('../deepclaude.sh', import.meta.url), 'utf8');
     assert.match(bash, /CLAUDE_CODE_AUTO_COMPACT_WINDOW=786432/);
-    assert.match(bash, /CLAUDE_CODE_AUTO_COMPACT_WINDOW=200000/);
+    assert.doesNotMatch(bash, /CLAUDE_CODE_AUTO_COMPACT_WINDOW=200000/);
     assert.doesNotMatch(bash, /900000/);
 });
 

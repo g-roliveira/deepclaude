@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# deepclaude — Use Claude Code with DeepSeek V4 Pro or other cheap backends
-# Usage: deepclaude [--backend ds|or|op|mm|fw|anthropic] [--model model-id] [--remote] [--effort level] [--status] [--cost] [--benchmark]
+# deepclaude — Use Claude Code with DeepSeek or Anthropic
+# Usage: deepclaude [--backend ds|anthropic] [--remote] [--effort level] [--status] [--cost] [--benchmark]
 
 set -euo pipefail
 
@@ -8,13 +8,10 @@ SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 
 # --- Config ---
 DEEPSEEK_URL="https://api.deepseek.com/anthropic"
-OPENROUTER_URL="https://openrouter.ai/api"
-FIREWORKS_URL="https://api.fireworks.ai/inference"
 BACKEND="${CHEAPCLAUDE_DEFAULT_BACKEND:-ds}"
 ACTION="launch"
 SWITCH_BACKEND=""
 EFFORT_LEVEL=""
-MODEL_OVERRIDE=""
 PROXY_PID=""
 SESSION_LOG=""
 
@@ -66,7 +63,6 @@ while [[ $# -gt 0 ]]; do
         --backend|-b) BACKEND="$2"; shift 2 ;;
         --switch|-s)  ACTION="switch"; SWITCH_BACKEND="$2"; shift 2 ;;
         --effort)     EFFORT_LEVEL="$2"; shift 2 ;;
-        --model|-m)   MODEL_OVERRIDE="$2"; shift 2 ;;
         --remote|-r)  ACTION="remote"; shift ;;
         --status)     ACTION="status"; shift ;;
         --cost)       ACTION="cost"; shift ;;
@@ -101,39 +97,8 @@ resolve_backend() {
             haiku="deepseek-flash[1m]"; subagent="deepseek-flash[1m]"
             export DEEPCLAUDE_VISION_MODEL="deepseek-flash"
             ;;
-        op|or|openrouter)
-            key="${OPENROUTER_API_KEY:-}"
-            [[ -z "$key" ]] && { echo "ERROR: OPENROUTER_API_KEY not set" >&2; exit 1; }
-            url="$OPENROUTER_URL"
-            if [[ -n "$MODEL_OVERRIDE" ]]; then
-                [[ "$MODEL_OVERRIDE" =~ ^[a-zA-Z0-9._:/-]+$ ]] || { echo "ERROR: Invalid OpenRouter model '$MODEL_OVERRIDE'" >&2; exit 1; }
-                # Claude Code only needs a recognized Claude model label here;
-                # the proxy replaces it with the requested OpenRouter model.
-                opus="claude-opus-5"; sonnet="claude-opus-5"
-                haiku="claude-opus-5"; subagent="claude-opus-5"
-            else
-                opus="deepseek/deepseek-v4-pro[1m]"; sonnet="deepseek/deepseek-v4-pro[1m]"
-                haiku="deepseek/deepseek-v4-pro[1m]"; subagent="deepseek/deepseek-v4-pro[1m]"
-            fi
-            ;;
-        mm|minimax)
-            key="${OPENROUTER_API_KEY:-}"
-            [[ -z "$key" ]] && { echo "ERROR: OPENROUTER_API_KEY not set" >&2; exit 1; }
-            url="$OPENROUTER_URL"
-            opus="minimax/minimax-m3:free[1m]"; sonnet="minimax/minimax-m3:free[1m]"
-            haiku="minimax/minimax-m3:free[1m]"; subagent="minimax/minimax-m3:free[1m]"
-            ;;
-        fw|fireworks)
-            key="${FIREWORKS_API_KEY:-}"
-            [[ -z "$key" ]] && { echo "ERROR: FIREWORKS_API_KEY not set" >&2; exit 1; }
-            url="$FIREWORKS_URL"
-            opus="accounts/fireworks/models/deepseek-v4-pro[1m]"
-            sonnet="accounts/fireworks/models/deepseek-v4-pro[1m]"
-            haiku="accounts/fireworks/models/deepseek-v4-pro[1m]"
-            subagent="accounts/fireworks/models/deepseek-v4-pro[1m]"
-            ;;
         anthropic) ;;
-        *) echo "ERROR: Unknown backend '$BACKEND'. Use: ds, or, op, mm, fw, anthropic" >&2; exit 1 ;;
+        *) echo "ERROR: Unknown backend '$BACKEND'. Use: ds, deepseek, anthropic" >&2; exit 1 ;;
     esac
     RESOLVED_URL="$url"; RESOLVED_KEY="$key"
     RESOLVED_OPUS="$opus"; RESOLVED_SONNET="$sonnet"
@@ -147,13 +112,7 @@ set_model_env() {
     export CLAUDE_CODE_SUBAGENT_MODEL="$RESOLVED_SUBAGENT"
     # DeepSeek's official Claude Code integration reserves headroom for
     # compaction, tool results, reasoning, and completion tokens.
-    if [[ -n "$MODEL_OVERRIDE" ]]; then
-        # Unknown custom model: conservative compact window so we never 400
-        # against a context limit we can't verify up front.
-        export CLAUDE_CODE_AUTO_COMPACT_WINDOW=200000
-    else
-        export CLAUDE_CODE_AUTO_COMPACT_WINDOW=786432
-    fi
+    export CLAUDE_CODE_AUTO_COMPACT_WINDOW=786432
     if [[ -n "$EFFORT_LEVEL" ]]; then
         export CLAUDE_CODE_EFFORT_LEVEL="$EFFORT_LEVEL"
     fi
@@ -166,19 +125,11 @@ show_status() {
     echo ""
     echo "  Keys:"
     echo "    DEEPSEEK_API_KEY:    $(mask_key "${DEEPSEEK_API_KEY:-}")"
-    echo "    OPENROUTER_API_KEY:  $(mask_key "${OPENROUTER_API_KEY:-}")"
-    echo "    FIREWORKS_API_KEY:   $(mask_key "${FIREWORKS_API_KEY:-}")"
     echo ""
     echo "  Backends:"
     echo "    deepclaude                  # DeepSeek V4.1 Flash (default)"
-    echo "    deepclaude -b or            # OpenRouter + DeepSeek"
-    echo "    deepclaude -b op --model X  # Any OpenRouter model, e.g. ...:free"
-    echo "    deepclaude -b mm            # OpenRouter + MiniMax M3 Free"
-    echo "    deepclaude -b fw            # Fireworks AI (fastest)"
     echo "    deepclaude -b anthropic     # Normal Claude Code"
     echo "    deepclaude --remote         # Remote control + DeepSeek"
-    echo "    deepclaude --remote -b or   # Remote control + OpenRouter"
-    echo "    deepclaude --remote -b mm   # Remote control + MiniMax M3 Free"
     echo ""
     local proxy_status
     proxy_status=$(curl -s http://127.0.0.1:3200/_proxy/status 2>/dev/null) || proxy_status=""
@@ -193,28 +144,25 @@ show_status() {
 
 show_cost() {
     echo ""
-    echo "  DeepSeek V4 Pro Pricing"
+    echo "  Token pricing estimates (USD, DeepSeek peak rates)"
     echo "  ======================="
     echo ""
     echo "  Provider        Input/M    Output/M   Cache Hit/M"
     echo "  ----------      --------   --------   -----------"
-    echo "  DeepSeek        \$0.44      \$0.87      \$0.004"
-    echo "  OpenRouter      \$0.44      \$0.87      (provider)"
-    echo "  Fireworks       \$1.74      \$3.48      (provider)"
+    echo "  DeepSeek        \$0.30      \$1.20      \$0.006"
     echo "  Anthropic       \$3.00      \$15.00     \$0.30"
     echo ""
-    echo "  Monthly estimate (heavy use, 25 days): \$30-80"
+    echo "  Estimates exclude search/fetch charges and off-peak discounts."
     echo ""
 }
 
 show_help() {
-    echo "deepclaude — Claude Code with cheap backends"
+    echo "deepclaude — Claude Code with DeepSeek or Anthropic"
     echo ""
     echo "Usage: deepclaude [options] [-- claude-args...]"
     echo ""
     echo "Options:"
-    echo "  -b, --backend <ds|or|op|mm|fw|anthropic>  Backend (default: ds)"
-    echo "  -m, --model <openrouter-id>          OpenRouter model override (with op)"
+    echo "  -b, --backend <ds|anthropic>          Backend (default: ds; ds alias: deepseek)"
     echo "  -r, --remote                        Remote control mode (browser URL)"
     echo "  --status                             Show keys and backends"
     echo "  --cost                               Pricing comparison"
@@ -225,8 +173,6 @@ show_help() {
     echo ""
     echo "Environment variables:"
     echo "  DEEPSEEK_API_KEY      DeepSeek API key (required for ds)"
-    echo "  OPENROUTER_API_KEY    OpenRouter API key (required for or/mm)"
-    echo "  FIREWORKS_API_KEY     Fireworks API key (required for fw)"
     echo "  CHEAPCLAUDE_DEFAULT_BACKEND  Default backend (default: ds)"
 }
 
@@ -234,11 +180,8 @@ do_switch() {
     local backend="$SWITCH_BACKEND"
     case "$backend" in
         ds|deepseek)   backend="deepseek" ;;
-        op|or|openrouter) backend="openrouter" ;;
-        mm|minimax)   backend="minimax" ;;
-        fw|fireworks)  backend="fireworks" ;;
         anthropic)     backend="anthropic" ;;
-    *) echo "ERROR: Unknown backend '$backend'. Use: ds, or, op, mm, fw, anthropic" >&2; exit 1 ;;
+    *) echo "ERROR: Unknown backend '$backend'. Use: ds, deepseek, anthropic" >&2; exit 1 ;;
     esac
     local resp
     resp=$(curl -sX POST http://127.0.0.1:3200/_proxy/mode -d "backend=$backend" 2>/dev/null) || {
@@ -251,12 +194,10 @@ run_benchmark() {
     echo ""
     echo "  Latency Benchmark (1 request each)"
     echo "  ==================================="
-    for name in deepseek openrouter fireworks; do
+    for name in deepseek; do
         local url="" key="" model=""
         case "$name" in
             deepseek)   url="$DEEPSEEK_URL"; key="${DEEPSEEK_API_KEY:-}"; model="deepseek-flash" ;;
-            openrouter) url="$OPENROUTER_URL"; key="${OPENROUTER_API_KEY:-}"; model="deepseek/deepseek-v4-pro" ;;
-            fireworks)  url="$FIREWORKS_URL"; key="${FIREWORKS_API_KEY:-}"; model="accounts/fireworks/models/deepseek-v4-pro" ;;
         esac
         if [[ -z "$key" ]]; then echo "  $name: SKIP (no key)"; continue; fi
         local start_ms=$(date +%s%3N 2>/dev/null || python3 -c 'import time;print(int(time.time()*1000))')
@@ -284,6 +225,7 @@ launch_claude() {
         unset ANTHROPIC_DEFAULT_HAIKU_MODEL CLAUDE_CODE_SUBAGENT_MODEL
         unset CLAUDE_CODE_EFFORT_LEVEL
         claude "$@"
+        return
     fi
 
     resolve_backend
@@ -297,7 +239,6 @@ launch_claude() {
     local port_file
     port_file=$(mktemp)
     local proxy_args=("$SCRIPT_DIR/proxy/start-proxy.js" "$RESOLVED_URL" "$RESOLVED_KEY" "$BACKEND")
-    [[ -n "$MODEL_OVERRIDE" ]] && proxy_args+=("$MODEL_OVERRIDE")
     node "${proxy_args[@]}" > "$port_file" 2>> "$SESSION_LOG" &
     PROXY_PID=$!
 
@@ -338,6 +279,7 @@ launch_remote() {
         unset ANTHROPIC_DEFAULT_HAIKU_MODEL CLAUDE_CODE_SUBAGENT_MODEL
         unset CLAUDE_CODE_EFFORT_LEVEL ANTHROPIC_API_KEY
         claude remote-control "$@"
+        return
     fi
 
     resolve_backend
@@ -348,7 +290,6 @@ launch_remote() {
     local port_file
     port_file=$(mktemp)
     local proxy_args=("$SCRIPT_DIR/proxy/start-proxy.js" "$RESOLVED_URL" "$RESOLVED_KEY" "$BACKEND")
-    [[ -n "$MODEL_OVERRIDE" ]] && proxy_args+=("$MODEL_OVERRIDE")
     node "${proxy_args[@]}" > "$port_file" 2>> "$SESSION_LOG" &
     PROXY_PID=$!
 

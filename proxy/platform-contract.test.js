@@ -44,8 +44,8 @@ test('Bash CLI still exposes help and supported provider flags without starting 
     const result = spawnSync('bash', ['deepclaude.sh', '--help'], { cwd: root, encoding: 'utf8', timeout: 5000 });
     assert.equal(result.status, 0, result.stderr);
     assert.match(result.stdout, /--backend/);
-    assert.match(result.stdout, /ds\|or\|op\|mm\|fw\|anthropic/);
+    assert.match(result.stdout, /ds\|anthropic/);
     assert.match(result.stdout, /--remote/);
-    assert.match(result.stdout, /--model/);
+    assert.doesNotMatch(result.stdout, /openrouter|minimax|fireworks|--model/i);
     assert.doesNotMatch(result.stdout, /Starting model proxy/);
 });

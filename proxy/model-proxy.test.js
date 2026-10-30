@@ -206,7 +206,7 @@ test('builds DeepSeek Anthropic path without dropping Claude Code query flags', 
     );
 });
 
-test('routes the minimax backend to OpenRouter with its free model', async () => {
+test('routes Claude model labels to DeepSeek Flash', async () => {
     let receivedBody;
     const upstream = createServer((req, res) => {
         const chunks = [];
@@ -217,7 +217,7 @@ test('routes the minimax backend to OpenRouter with its free model', async () =>
             res.end(JSON.stringify({
                 id: 'msg_test',
                 type: 'message',
-                model: 'minimax/minimax-m3:free',
+                model: 'deepseek-flash',
                 content: [{ type: 'text', text: 'ok' }],
                 usage: { input_tokens: 2, output_tokens: 1 },
             }));
@@ -230,9 +230,9 @@ test('routes the minimax backend to OpenRouter with its free model', async () =>
         apiKey: 'test-key',
         startPort: 0,
         backends: {
-            minimax: { url: `http://127.0.0.1:${upstreamPort}/api/v1`, apiKey: 'test-key' },
+            deepseek: { url: `http://127.0.0.1:${upstreamPort}/api/v1`, apiKey: 'test-key' },
         },
-        defaultMode: 'minimax',
+        defaultMode: 'ds',
         upstreamRequest: httpRequest,
     });
 
@@ -247,14 +247,14 @@ test('routes the minimax backend to OpenRouter with its free model', async () =>
             }),
         });
         assert.equal(response.status, 200);
-        assert.equal(receivedBody.model, 'minimax/minimax-m3:free');
+        assert.equal(receivedBody.model, 'deepseek-flash');
     } finally {
         proxy.close();
         closeServer(upstream);
     }
 });
 
-test('routes an OpenRouter model override without changing the Claude Code model label', async () => {
+test('routes future Claude tier labels to DeepSeek Flash', async () => {
     let receivedBody;
     const upstream = createServer((req, res) => {
         const chunks = [];
@@ -265,7 +265,7 @@ test('routes an OpenRouter model override without changing the Claude Code model
             res.end(JSON.stringify({
                 id: 'msg_custom',
                 type: 'message',
-                model: 'inclusionai/ling-3.0-flash-sante:free',
+                model: 'deepseek-flash',
                 content: [{ type: 'text', text: 'ok' }],
                 usage: { input_tokens: 2, output_tokens: 1 },
             }));
@@ -278,10 +278,9 @@ test('routes an OpenRouter model override without changing the Claude Code model
         apiKey: 'test-key',
         startPort: 0,
         backends: {
-            openrouter: { url: `http://127.0.0.1:${upstreamPort}/api`, apiKey: 'test-key' },
+            deepseek: { url: `http://127.0.0.1:${upstreamPort}/api`, apiKey: 'test-key' },
         },
-        defaultMode: 'openrouter',
-        modelOverride: 'inclusionai/ling-3.0-flash-sante:free',
+        defaultMode: 'deepseek',
         upstreamRequest: httpRequest,
     });
 
@@ -290,13 +289,13 @@ test('routes an OpenRouter model override without changing the Claude Code model
             method: 'POST',
             headers: { 'content-type': 'application/json' },
             body: JSON.stringify({
-                model: 'claude-opus-5',
+                model: 'claude-sonnet-future',
                 max_tokens: 32,
                 messages: [{ role: 'user', content: 'hello' }],
             }),
         });
         assert.equal(response.status, 200);
-        assert.equal(receivedBody.model, 'inclusionai/ling-3.0-flash-sante:free');
+        assert.equal(receivedBody.model, 'deepseek-flash');
     } finally {
         proxy.close();
         closeServer(upstream);
@@ -335,7 +334,7 @@ test('requests uncompressed model responses so JSON remains parseable', async ()
             method: 'POST',
             headers: { 'content-type': 'application/json' },
             body: JSON.stringify({
-                model: 'minimax/minimax-m3:free',
+                model: 'deepseek-flash',
                 max_tokens: 32,
                 messages: [{ role: 'user', content: 'hello' }],
             }),
@@ -1112,14 +1111,14 @@ test('DeepSeek keeps reasoning controls, history and native tools', () => {
     };
     const tools = structuredClone(body.tools);
     const messages = structuredClone(body.messages);
-    prepareBackendOptions(body, true);
+    prepareBackendOptions(body);
     assert.deepEqual(body.thinking, { type: 'enabled' });
     assert.deepEqual(body.output_config, { effort: 'max' });
     assert.deepEqual(body.tools, tools);
     assert.deepEqual(body.messages, messages);
     assert.equal(body.context_management, undefined);
-    prepareBackendOptions(body, false);
-    assert.equal(body.thinking, undefined);
+    prepareBackendOptions(body);
+    assert.deepEqual(body.thinking, { type: 'enabled' }, 'normalization is idempotent');
 });
 
 test('token estimate includes system, tools and UTF-8 input', () => {

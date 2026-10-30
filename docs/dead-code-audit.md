@@ -3,6 +3,8 @@
 > Registro histórico anterior à remoção de suporte Windows. Os achados relativos
 > ao launcher PowerShell foram resolvidos pela remoção completa desse launcher,
 > não pela implementação das correções sugeridas. Consulte `windows-removal.md`.
+> Os providers além de DeepSeek e Anthropic também foram removidos posteriormente;
+> consulte `provider-removal.md`. As tabelas abaixo descrevem o estado anterior.
 
 Data: 2026-10-29. Etapa: discovery/identificação com `surgical-refactor`.
 Nenhum código, provider, arquivo de imagem ou log foi removido. As mudanças
