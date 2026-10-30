@@ -1,0 +1,66 @@
+proxy/model-proxy.test.js
+  s_dd017cf1a55dbd::t_5d96174f851a21 209,220,233,235,250,257,268,281,283,292,298,337,1114,1120-1121
+.agents/skills/surgical-refactor/config/stryker.config.mjs
+  s_dd017cf1a55dbd::t_be3561d799f7de 7-11,13-18,20
+proxy/platform-contract.test.js
+  s_dd017cf1a55dbd::t_5d96174f851a21 47,49
+proxy/upstream-path.test.js
+  s_dd017cf1a55dbd::t_5d96174f851a21 10-11
+docs/dead-code-audit.md
+  s_dd017cf1a55dbd::t_4f488864d946cc 6-7
+AGENTS.md
+  s_dd017cf1a55dbd::t_64e4cac41a551d 3-30
+README.md
+  s_dd017cf1a55dbd::t_23b548cbbd04df 3-4,6-7,9,11,17-20,23-25,28-86,89-90,95-98,100-102,104,106-109,111-115,119-124,126-127,129-131,133-136,138,140,143-146,149-152,154-155
+CLAUDE.md
+  s_dd017cf1a55dbd::t_0cb274545317d9 3,5,7-9,11-12,15-86
+proxy/start-proxy.js
+  s_dd017cf1a55dbd::t_66c199e071624e 8-12
+.surgical-refactor/config.json
+  s_dd017cf1a55dbd::t_7122f714b5180c 19-20
+  s_dd017cf1a55dbd::t_170ce088127d6d 11,16-18,21-23,36-37
+proxy/README.md
+  s_dd017cf1a55dbd::t_7eebd09cdee4a5 23-24,31,38-47
+  s_dd017cf1a55dbd::t_7071820b7bae10 48
+proxy/model-proxy.js
+  s_dd017cf1a55dbd::t_acdbf2e7efc362 725-727,786
+  s_dd017cf1a55dbd::t_0a735aef840268 840-841,846
+  s_dd017cf1a55dbd::t_4b8fcc7295aab2 60,396,403,425,702-705,711,721,733,957,1018,1054,1109
+deepclaude.sh
+  s_dd017cf1a55dbd::t_1b1f483864b7a4 2-3,101,115,147,152,155,160,165,184,197,228,282
+.surgical-refactor/contracts.md
+  s_dd017cf1a55dbd::t_170ce088127d6d 3-5,18-27
+  s_dd017cf1a55dbd::t_7c8a63c2a3455f 28
+.agents/skills/surgical-refactor/SKILL.md
+  s_dd017cf1a55dbd::t_7eebd09cdee4a5 88-90
+docs/surgical-refactor.md
+  s_dd017cf1a55dbd::t_7eebd09cdee4a5 5-8,67,94-95,129-133,155-156
+proxy/deepseek-compat.test.js
+  s_dd017cf1a55dbd::t_5d96174f851a21 166,245
+proxy/provider-contract.test.js
+  s_dd017cf1a55dbd::t_0a735aef840268 92
+  s_dd017cf1a55dbd::t_a44ad032cea0aa 44,46-51,165-177
+  s_dd017cf1a55dbd::t_ff7af417a79721 14-22,25-40,45
+  s_dd017cf1a55dbd::t_b7bd5b8ebc7e3a 1-13,23-24,41-43,52-91,93-117,144-164,178-180,208-258
+  s_dd017cf1a55dbd::t_bb1c001d062eb2 118-143
+  s_dd017cf1a55dbd::t_4f488864d946cc 181-207
+docs/provider-removal.md
+  s_dd017cf1a55dbd::t_be089ba311c829 5-6,137-138
+  s_dd017cf1a55dbd::t_1ce184c183a578 1-4,7-136,139-157
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "88fbb5196b790cdb2d2093415548629de272cf00",
+  "prompts": {},
+  "sessions": {
+    "s_dd017cf1a55dbd": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019ffdcc-cd64-7420-a4a2-86164053388a",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Gustavo Oliveira <gustavo@groliveira.com.br>"
+    }
+  }
+}
