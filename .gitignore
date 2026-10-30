@@ -1,0 +1,5 @@
+.deepclaude/logs/
+.agents/skills/surgical-refactor/tooling/node_modules/
+.agents/skills/surgical-refactor/tooling/.venv/
+.surgical-refactor/artifacts/
+__pycache__/

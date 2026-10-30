@@ -1,0 +1,6 @@
+id: no-runtime-eval
+language: JavaScript
+severity: error
+message: Dynamic evaluation prevents reliable removal analysis; replace or explicitly review it.
+rule:
+  pattern: eval($CODE)

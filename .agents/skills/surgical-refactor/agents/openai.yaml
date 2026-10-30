@@ -1,0 +1,4 @@
+interface:
+  display_name: "Surgical Refactor"
+  short_description: "Remoções cirúrgicas com baseline e regressões"
+  default_prompt: "Use $surgical-refactor para remover uma funcionalidade com análise de impacto, preservando os contratos restantes e registrando evidências."

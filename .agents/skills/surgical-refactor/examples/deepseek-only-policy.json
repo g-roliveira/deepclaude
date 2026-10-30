@@ -1,0 +1,12 @@
+{
+  "mode": "enforce",
+  "removedFeature": "LLM providers other than DeepSeek (example, not active)",
+  "forbiddenModules": ["@openrouter/sdk", "@google/generative-ai"],
+  "forbiddenSymbols": ["GeminiVisionAdapter", "OpenRouterProvider"],
+  "forbiddenPaths": ["proxy/providers/openrouter.js", "proxy/providers/gemini.js"],
+  "forbiddenText": [
+    { "text": "OPENROUTER_API_KEY", "paths": ["proxy", "deepclaude.sh"] },
+    { "text": "FIREWORKS_API_KEY", "paths": ["proxy", "deepclaude.sh"] }
+  ],
+  "allowedReferencePaths": []
+}

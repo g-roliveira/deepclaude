@@ -1,0 +1,21 @@
+rules:
+  - id: no-runtime-eval
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: Runtime eval hides dependencies from the removal graph.
+    pattern: eval(...)
+  - id: no-production-import-tests
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: Production code must not depend on test modules.
+    patterns:
+      - pattern-either:
+          - pattern: import $X from $MODULE
+          - pattern: import { ... } from $MODULE
+          - pattern: import * as $X from $MODULE
+          - pattern: import $MODULE
+      - metavariable-regex:
+          metavariable: $MODULE
+          regex: .*\.test\.[cm]?[jt]s.*
+    paths:
+      exclude: ['**/*.test.js', '**/*.test.mjs', '**/*.test.ts']

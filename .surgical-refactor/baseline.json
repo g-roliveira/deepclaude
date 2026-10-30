@@ -1,0 +1,124 @@
+{
+  "version": 1,
+  "branch": "feat/surgical-refactor-skill",
+  "head": "d66df771c6049481032a2b7359a3b240e5039933",
+  "capturedAt": "2026-10-30T01:56:46.181Z",
+  "findings": [],
+  "checks": [
+    {
+      "name": "proxy-syntax",
+      "required": true,
+      "exitCode": 0,
+      "durationMs": 35,
+      "error": null,
+      "command": [
+        "node",
+        "--check",
+        "proxy/model-proxy.js"
+      ]
+    },
+    {
+      "name": "launcher-syntax",
+      "required": true,
+      "exitCode": 0,
+      "durationMs": 30,
+      "error": null,
+      "command": [
+        "node",
+        "--check",
+        "proxy/start-proxy.js"
+      ]
+    },
+    {
+      "name": "bash-syntax",
+      "required": true,
+      "exitCode": 0,
+      "durationMs": 7,
+      "error": null,
+      "command": [
+        "bash",
+        "-n",
+        "deepclaude.sh"
+      ]
+    },
+    {
+      "name": "powershell-syntax",
+      "required": true,
+      "exitCode": 0,
+      "durationMs": 251,
+      "error": null,
+      "command": [
+        "pwsh",
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        "$t=$null; $e=$null; [System.Management.Automation.Language.Parser]::ParseFile('deepclaude.ps1',[ref]$t,[ref]$e)>$null; if($e.Count){$e;exit 1}"
+      ]
+    },
+    {
+      "name": "regressions",
+      "required": true,
+      "exitCode": 0,
+      "durationMs": 3320,
+      "error": null,
+      "command": [
+        "node",
+        "--test",
+        "proxy/model-proxy.test.js",
+        "proxy/deepseek-compat.test.js",
+        "proxy/upstream-path.test.js"
+      ]
+    },
+    {
+      "name": "skill-tests",
+      "required": true,
+      "exitCode": 0,
+      "durationMs": 1213,
+      "error": null,
+      "command": [
+        "node",
+        "--test",
+        ".agents/skills/surgical-refactor/tests/refactor.test.mjs"
+      ]
+    }
+  ],
+  "sourceHashes": {
+    "deepclaude.ps1": "7431c7e860dbf765d9599fc7519faf95a40b48e77183a4a24b3d7c936118369c",
+    "deepclaude.sh": "56b3309ae3d8823753c8cf6354503dd4cb45b1de5ee4d943e11dcd0930ef8973",
+    "package.json": "5913024c29a02f231880ea48cb21a45ce63f2d170d08ab16d7c38d060d5e0a25",
+    "proxy/README.md": "ee6b71f657d85bf67efe7b4bb6600ad090c6120309b089b9f79ee6bb87fe5035",
+    "proxy/deepseek-compat.test.js": "b229d4e2eea6ab30cfc5325d02645fcf11db13615a5916ea5bd2d7e447d9a4bf",
+    "proxy/model-proxy.js": "0a794265b77342e2c67992dad31d167d637ea676b364f9aebc3ca65403034237",
+    "proxy/model-proxy.test.js": "c5fa2414bcf715c97bc69cd98912cc5302f36b19a335c2f51701cba9f81fd491",
+    "proxy/start-proxy.js": "d165017ec6518e79dfb3be4dc87da0ce5e4f8d46f1b97d47b5762baaaaec5eb7",
+    "proxy/upstream-path.test.js": "4078f87871e8bd432b6e47d81e9c891b69a730a107360df7a5d1a9db593eac9d"
+  },
+  "publicExports": {
+    "proxy/deepseek-compat.test.js": [],
+    "proxy/model-proxy.js": [
+      "CONTEXT_WARN_TOOLS_BYTES",
+      "CONTEXT_WARN_TOOLS_COUNT",
+      "DEEPSEEK_VISION_MODEL",
+      "buildUpstreamPath",
+      "computeContextMetrics",
+      "computeResponseMetadata",
+      "containsImageBlock",
+      "estimateInputTokens",
+      "extractUsageMetrics",
+      "formatContextLine",
+      "formatContextResponse",
+      "formatContextWarning",
+      "needsContextWarning",
+      "prepareBackendOptions",
+      "prepareDeepSeekVisionRequest",
+      "sanitizeToolSchemasForBackend",
+      "startModelProxy",
+      "stripImagesFromMessages"
+    ],
+    "proxy/model-proxy.test.js": [],
+    "proxy/start-proxy.js": [],
+    "proxy/upstream-path.test.js": []
+  },
+  "contracts": ".surgical-refactor/contracts.md",
+  "failures": []
+}

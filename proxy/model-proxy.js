@@ -2,40 +2,47 @@ import { createServer } from 'http';
 import { request as httpsRequest } from 'https';
 import { URL } from 'url';
 import { Transform } from 'stream';
+import { StringDecoder } from 'node:string_decoder';
 
 const ANTHROPIC_FALLBACK = 'https://api.anthropic.com';
 const MODEL_PATHS = ['/v1/messages'];
-const MAX_BODY_SIZE = 50 * 1024 * 1024; // 50 MB
-const REQUEST_TIMEOUT_MS = 5 * 60 * 1000; // 5 min per request
+// DeepSeek rejects request bodies above 48 MiB. Enforce the same limit
+// locally so callers receive a clear 413 instead of an upstream failure.
+const MAX_BODY_SIZE = 48 * 1024 * 1024;
+// A Files upload permits a 64 MiB file plus multipart envelope. The upstream
+// validates the actual file size; Messages retain their separate 48 MiB cap.
+const MAX_FILES_BODY_SIZE = 65 * 1024 * 1024;
+const FILES_BETA = 'files-api-2025-04-14';
 
-// Image fallback: when a non-Anthropic backend receives an image (which
-// DeepSeek's compat endpoint rejects with 400), reroute that single turn
-// to a vision-capable provider, then return to the normal backend.
-// DEEPCLAUDE_IMAGE_FALLBACK:
-//   anthropic (default) — uses existing Claude Code auth (Max subscription)
-//   openrouter — uses OPENROUTER_API_KEY + DEEPCLAUDE_IMAGE_MODEL
-//   gemini — uses DEEPCLAUDE_GEMINI_API_KEY + DEEPCLAUDE_GEMINI_MODEL
-//            direct Google AI Studio (fastest, free tier)
-//   off — disables fallback
-const IMAGE_FALLBACK = process.env.DEEPCLAUDE_IMAGE_FALLBACK || 'anthropic';
-const IMAGE_FALLBACK_ENABLED = IMAGE_FALLBACK !== 'off';
-const IMAGE_FALLBACK_MODEL = process.env.DEEPCLAUDE_IMAGE_MODEL || 'google/gemini-2.5-flash';
-const GEMINI_MODEL = process.env.DEEPCLAUDE_GEMINI_MODEL || 'gemini-2.5-flash';
-const GEMINI_API_KEY = process.env.DEEPCLAUDE_GEMINI_API_KEY || '';
-const GEMINI_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta/models';
+function withFilesBeta(value) {
+    return [...new Set([...(value || '').split(',').map(v => v.trim()).filter(Boolean), FILES_BETA])].join(',');
+}
+const REQUEST_TIMEOUT_MS = 5 * 60 * 1000; // 5 min per request
+const DEFAULT_SEMANTIC_STALL_TIMEOUT_MS = 2 * 60 * 1000;
+export const DEEPSEEK_VISION_MODEL = process.env.DEEPCLAUDE_VISION_MODEL
+    || 'deepseek-flash';
+
+function semanticStallTimeoutFromEnv() {
+    const raw = process.env.DEEPCLAUDE_SEMANTIC_TIMEOUT_MS;
+    if (raw === undefined || raw === '') return DEFAULT_SEMANTIC_STALL_TIMEOUT_MS;
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) && parsed >= 0
+        ? parsed
+        : DEFAULT_SEMANTIC_STALL_TIMEOUT_MS;
+}
 
 const MODEL_REMAP = {
     deepseek: {
-        _default: { fable: 'deepseek-v4-pro', opus: 'deepseek-v4-pro', sonnet: 'deepseek-v4-flash', haiku: 'deepseek-v4-flash' },
-        'claude-fable-5':     'deepseek-v4-pro',
-        'claude-opus-5':      'deepseek-v4-pro',
-        'claude-opus-4-6':    'deepseek-v4-pro',
-        'claude-opus-4-7':    'deepseek-v4-pro',
-        'claude-opus-4-8':    'deepseek-v4-pro',
-        'claude-sonnet-5':    'deepseek-v4-flash',
-        'claude-sonnet-4-6':  'deepseek-v4-flash',
-        'claude-sonnet-4-5-20250929': 'deepseek-v4-flash',
-        'claude-haiku-4-5-20251001':  'deepseek-v4-flash',
+        _default: { fable: 'deepseek-flash', opus: 'deepseek-flash', sonnet: 'deepseek-flash', haiku: 'deepseek-flash' },
+        'claude-fable-5':     'deepseek-flash',
+        'claude-opus-5':      'deepseek-flash',
+        'claude-opus-4-6':    'deepseek-flash',
+        'claude-opus-4-7':    'deepseek-flash',
+        'claude-opus-4-8':    'deepseek-flash',
+        'claude-sonnet-5':    'deepseek-flash',
+        'claude-sonnet-4-6':  'deepseek-flash',
+        'claude-sonnet-4-5-20250929': 'deepseek-flash',
+        'claude-haiku-4-5-20251001':  'deepseek-flash',
     },
     openrouter: {
         _default: { fable: 'deepseek/deepseek-v4-pro', opus: 'deepseek/deepseek-v4-pro', sonnet: 'deepseek/deepseek-v4-flash', haiku: 'deepseek/deepseek-v4-flash' },
@@ -49,28 +56,29 @@ const MODEL_REMAP = {
         'claude-sonnet-4-5-20250929': 'deepseek/deepseek-v4-flash',
         'claude-haiku-4-5-20251001':  'deepseek/deepseek-v4-flash',
     },
+    minimax: {
+        _default: { fable: 'minimax/minimax-m3:free', opus: 'minimax/minimax-m3:free', sonnet: 'minimax/minimax-m3:free', haiku: 'minimax/minimax-m3:free' },
+        'claude-fable-5':     'minimax/minimax-m3:free',
+        'claude-opus-5':      'minimax/minimax-m3:free',
+        'claude-opus-4-6':    'minimax/minimax-m3:free',
+        'claude-opus-4-7':    'minimax/minimax-m3:free',
+        'claude-opus-4-8':    'minimax/minimax-m3:free',
+        'claude-sonnet-5':    'minimax/minimax-m3:free',
+        'claude-sonnet-4-6':  'minimax/minimax-m3:free',
+        'claude-sonnet-4-5-20250929': 'minimax/minimax-m3:free',
+        'claude-haiku-4-5-20251001':  'minimax/minimax-m3:free',
+    },
 };
 
-// Many-to-one collisions in MODEL_REMAP collapse last-write-wins.
-// Used on the image-fallback path to swap backend model names back
-// to canonical Claude names on the wire.
-const REVERSE_MODEL_REMAP = {};
-for (const [backend, table] of Object.entries(MODEL_REMAP)) {
-    REVERSE_MODEL_REMAP[backend] = {};
-    for (const [claudeName, backendName] of Object.entries(table)) {
-        if (claudeName === '_default') continue;
-        REVERSE_MODEL_REMAP[backend][backendName] = claudeName;
-    }
-}
-
 const PRICING_PER_M = {
-    deepseek:       { input: 0.44,  output: 0.87 },
+    deepseek:       { input: 0.30,  output: 1.20, cacheRead: 0.006 },
     openrouter:     { input: 0.44,  output: 0.87 },
+    minimax:        { input: 0,     output: 0 },
     fireworks:      { input: 1.74,  output: 3.48 },
     anthropic:      { input: 3.00,  output: 15.00 },
-    anthropic_max:  { input: 0,     output: 0 },     // Max subscription quota
-    gemini:         { input: 0,     output: 0 },     // Google AI Studio free tier
-    image_fallback: { input: 0.15,  output: 0.60 },   // Gemini Flash via OpenRouter
+    // Flash peak prices: conservative estimate, not an invoice. Off-peak and
+    // Chinese public holidays can lower actual billing; search/fetch is extra.
+    deepseek_vision:{ input: 0.30,  output: 1.20, cacheRead: 0.006 },
     _single:        { input: 0.44,  output: 0.87 },
 };
 
@@ -80,18 +88,38 @@ const PRICING_PER_M = {
  * message_delta, which crashes Claude Code ("$.input_tokens" is undefined).
  */
 class UsageNormalizer extends Transform {
-    constructor(onUsage, { modelRewrite } = {}) {
+    constructor(onUsage, { modelRewrite, onSemanticEvent, onParseError } = {}) {
         super();
         this._buf = '';
+        this._decoder = new StringDecoder('utf8');
         this._onUsage = onUsage;
         this._inputTokens = 0;
         this._outputTokens = 0;
+        // Context-telemetry fields (metadata only, no content retained).
+        this._respBytes = 0;
+        this._sawInputUsage = false;
+        this._sawOutputUsage = false;
+        this._cacheRead = null;
+        this._cacheCreation = null;
+        // Response-shape accumulator: block types, tool names, protocol
+        // markers only — never text, arguments, or results.
+        this._respMeta = {
+            blockTypes: [],
+            toolUseNames: [],
+            serverToolUseNames: [],
+            toolSearchResultCount: 0,
+            toolReferenceCount: 0,
+            stopReason: null,
+        };
         this._modelRewrite = modelRewrite || null;
+        this._onSemanticEvent = onSemanticEvent || null;
+        this._onParseError = onParseError || null;
     }
 
     _transform(chunk, _enc, cb) {
-        this._buf += chunk.toString();
-        const parts = this._buf.split('\n\n');
+        this._respBytes += chunk.length;
+        this._buf += this._decoder.write(chunk);
+        const parts = this._buf.split(/\r?\n\r?\n/);
         this._buf = parts.pop();
         for (const part of parts) {
             this.push(this._fix(part) + '\n\n');
@@ -102,6 +130,7 @@ class UsageNormalizer extends Transform {
     _fix(event) {
         const m = event.match(/^data: (.+)$/m);
         if (!m) return event;
+        if (m[1].trim() === '[DONE]') return event;
         try {
             const d = JSON.parse(m[1]);
             let changed = false;
@@ -117,6 +146,13 @@ class UsageNormalizer extends Transform {
             if (d.type === 'message_start' && d.message) {
                 if (d.message.usage) {
                     this._inputTokens = d.message.usage.input_tokens || 0;
+                    this._sawInputUsage = true;
+                    if (Number.isFinite(d.message.usage.cache_read_input_tokens)) {
+                        this._cacheRead = d.message.usage.cache_read_input_tokens;
+                    }
+                    if (Number.isFinite(d.message.usage.cache_creation_input_tokens)) {
+                        this._cacheCreation = d.message.usage.cache_creation_input_tokens;
+                    }
                 } else {
                     d.message.usage = { input_tokens: 0, output_tokens: 0 };
                     changed = true;
@@ -131,20 +167,60 @@ class UsageNormalizer extends Transform {
             }
             if (d.type === 'message_delta') {
                 if (d.usage) {
-                    this._outputTokens = d.usage.output_tokens || 0;
+                    if (Number.isFinite(d.usage.input_tokens)) {
+                        this._inputTokens = d.usage.input_tokens;
+                        this._sawInputUsage = true;
+                    }
+                    if (Number.isFinite(d.usage.output_tokens)) {
+                        this._outputTokens = d.usage.output_tokens;
+                        this._sawOutputUsage = true;
+                    }
+                    if (Number.isFinite(d.usage.cache_read_input_tokens)) {
+                        this._cacheRead = d.usage.cache_read_input_tokens;
+                    }
+                    if (Number.isFinite(d.usage.cache_creation_input_tokens)) {
+                        this._cacheCreation = d.usage.cache_creation_input_tokens;
+                    }
                 } else {
                     d.usage = { output_tokens: 0 };
                     changed = true;
                 }
+                const stop = sanitizeToken(d.delta?.stop_reason ?? d.stop_reason);
+                if (stop) this._respMeta.stopReason = stop;
+            }
+            if (d.type === 'content_block_start' && d.content_block) {
+                const t = sanitizeToken(d.content_block.type);
+                if (t) {
+                    if (this._respMeta.blockTypes.length < 64) this._respMeta.blockTypes.push(t);
+                    if (t === 'tool_use') {
+                        const n = sanitizeToken(d.content_block.name);
+                        if (n && this._respMeta.toolUseNames.length < 32) this._respMeta.toolUseNames.push(n);
+                    } else if (t === 'server_tool_use') {
+                        const n = sanitizeToken(d.content_block.name);
+                        if (n && this._respMeta.serverToolUseNames.length < 32) {
+                            this._respMeta.serverToolUseNames.push(n);
+                        }
+                    } else if (t === 'tool_search_tool_result') {
+                        this._respMeta.toolSearchResultCount++;
+                    } else if (t === 'tool_reference') {
+                        this._respMeta.toolReferenceCount++;
+                    }
+                }
+            }
+            if (this._onSemanticEvent) {
+                queueMicrotask(() => this._onSemanticEvent(d));
             }
             if (changed) return event.replace(m[1], () => JSON.stringify(d));
-        } catch { /* not JSON, pass through */ }
+        } catch (err) {
+            this._onParseError?.(err, event.length);
+        }
         return event;
     }
 
     _flush(cb) {
+        this._buf += this._decoder.end();
         if (this._buf.trim()) this.push(this._fix(this._buf) + '\n\n');
-        if (this._onUsage) this._onUsage(this._inputTokens, this._outputTokens);
+        if (this._onUsage) this._onUsage(this._inputTokens, this._outputTokens, this._cacheRead, this._cacheCreation);
         cb();
     }
 }
@@ -220,7 +296,7 @@ function stripRedactedThinking(parsed) {
 
 // Recurses into tool_result.content[] because Claude Code's Read tool
 // wraps a returned PNG there rather than at the top of the message.
-function containsImageBlock(messages) {
+export function containsImageBlock(messages) {
     if (!Array.isArray(messages)) return false;
     const blockHasImage = (block) => {
         if (!block) return false;
@@ -242,7 +318,7 @@ function containsImageBlock(messages) {
 // turn earlier in history doesn't pin the rest of the conversation to
 // Anthropic — which would silently spend Max quota while the TUI still
 // shows the cheap backend. Returns the count of images replaced.
-function stripImagesFromMessages(messages) {
+export function stripImagesFromMessages(messages) {
     if (!Array.isArray(messages)) return 0;
     let count = 0;
     const strip = (block) => {
@@ -263,118 +339,420 @@ function stripImagesFromMessages(messages) {
     return count;
 }
 
-// --- Gemini direct vision fallback ---
-// Translates the latest user turn to Gemini API format, sends it,
-// and translates the response back to Anthropic format so Claude Code
-// sees a normal assistant reply.
+const IMAGE_MEDIA_TYPES = new Set([
+    'image/jpeg',
+    'image/png',
+    'image/gif',
+    'image/webp',
+]);
 
-function anthropicToGemini(parsed) {
-    const sysText = Array.isArray(parsed.system)
-        ? parsed.system.map(s => s.text || s.content || '').filter(Boolean).join('\n\n')
-        : (typeof parsed.system === 'string' ? parsed.system : '');
+function imageBlocksIn(block) {
+    if (!block) return [];
+    if (block.type === 'image') return [block];
+    if (block.type === 'tool_result' && Array.isArray(block.content)) {
+        return block.content.flatMap(imageBlocksIn);
+    }
+    return [];
+}
 
-    const contents = [];
-    for (const msg of parsed.messages || []) {
-        const role = msg.role === 'assistant' ? 'model' : 'user';
-        const parts = [];
-        const content = Array.isArray(msg.content) ? msg.content : [msg.content];
-        for (const block of content) {
-            if (!block) continue;
-            if (block.type === 'text') {
-                parts.push({ text: block.text || '' });
-            } else if (block.type === 'image') {
-                const src = block.source || block.image_url || {};
-                const b64 = src.data || '';
-                const mime = src.media_type || src.format || 'image/png';
-                parts.push({ inline_data: { mime_type: mime, data: b64 } });
-            } else if (block.type === 'tool_result') {
-                const inner = Array.isArray(block.content) ? block.content : [block.content];
-                let txt = '';
-                for (const b of inner) {
-                    if (b && b.type === 'text') txt += (txt ? '\n' : '') + (b.text || '');
+function imageBytesMatchMediaType(bytes, mediaType) {
+    if (mediaType === 'image/png') {
+        return bytes.length >= 8
+            && bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+    }
+    if (mediaType === 'image/jpeg') {
+        return bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
+    }
+    if (mediaType === 'image/gif') {
+        return bytes.length >= 6 && ['GIF87a', 'GIF89a'].includes(bytes.subarray(0, 6).toString('ascii'));
+    }
+    if (mediaType === 'image/webp') {
+        return bytes.length >= 12
+            && bytes.subarray(0, 4).toString('ascii') === 'RIFF'
+            && bytes.subarray(8, 12).toString('ascii') === 'WEBP';
+    }
+    return false;
+}
+
+function validateDeepSeekImages(messages) {
+    let imageCount = 0;
+    for (const message of messages || []) {
+        if (!Array.isArray(message.content)) continue;
+        for (const block of message.content.flatMap(imageBlocksIn)) {
+            if (++imageCount > 600) return 'DeepSeek allows at most 600 images per request';
+            const source = block.source;
+            if (!source || !source.type) return 'image block is missing its source';
+            if (source.type === 'base64') {
+                const mediaType = source.media_type?.toLowerCase();
+                const data = typeof source.data === 'string' ? source.data.trim() : '';
+                if (!IMAGE_MEDIA_TYPES.has(mediaType)) {
+                    return `unsupported image media_type ${source.media_type || '(missing)'}`;
                 }
-                parts.push({ text: txt || '[tool result]' });
-            } else if (block.type === 'tool_use') {
-                parts.push({ text: JSON.stringify({ tool: block.name, id: block.id, input: block.input }) });
-            } else if (typeof block === 'string') {
-                parts.push({ text: block });
+                const decodedSize = data.length / 4 * 3 - (data.endsWith('==') ? 2 : data.endsWith('=') ? 1 : 0);
+                if (decodedSize > 32 * 1024 * 1024) return 'Inline image exceeds DeepSeek limit of 32 MiB';
+                if (!data || data.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(data)) {
+                    return 'invalid base64 data in image block';
+                }
+                const bytes = Buffer.from(data, 'base64');
+                if (!bytes.length) return 'empty base64 data in image block';
+                if (!imageBytesMatchMediaType(bytes, mediaType)) {
+                    return `image bytes do not match media_type ${mediaType}`;
+                }
+                // Forward the same canonical values that were validated.
+                source.media_type = mediaType;
+                source.data = data;
+            } else if (source.type === 'url') {
+                if (typeof source.url !== 'string' || source.url.length > 8192) return 'Image URL exceeds 8192 characters or is missing';
+                try {
+                    const url = new URL(source.url);
+                    if (!['http:', 'https:'].includes(url.protocol)) throw new Error('unsupported protocol');
+                } catch {
+                    return 'image URL must be a valid http(s) URL';
+                }
+            } else if (source.type === 'file') {
+                if (typeof source.file_id !== 'string' || !/^file-api-[A-Za-z0-9_-]+$/.test(source.file_id)) {
+                    return 'Image file source requires a DeepSeek file_id (file-api-...)';
+                }
+            } else {
+                return `unsupported image source type ${source.type}`;
             }
         }
-        if (parts.length) contents.push({ role, parts });
+    }
+    return null;
+}
+
+/**
+ * Prepare a Claude Code Messages request for DeepSeek's native vision model.
+ * DeepSeek accepts the Anthropic image block shape unchanged, so no content
+ * translation is required. Only a user message may trigger vision routing.
+ */
+export function prepareDeepSeekVisionRequest(parsed) {
+    const messages = parsed?.messages;
+    const lastMessage = messages?.[messages.length - 1];
+    if (lastMessage?.role !== 'user' || !containsImageBlock([lastMessage])) {
+        return null;
     }
 
-    const generationConfig = { max_output_tokens: parsed.max_tokens || 4096 };
-    if (parsed.temperature != null) generationConfig.temperature = parsed.temperature;
+    // DeepSeek validates every image in the request. Keep the current image
+    // turn, but replace older screenshots/read results with placeholders.
+    if (messages.length > 1) stripImagesFromMessages(messages.slice(0, -1));
+    const imageError = validateDeepSeekImages([lastMessage]);
+    if (imageError) throw new Error(imageError);
 
-    const geminiReq = { contents, generationConfig };
-    if (sysText) geminiReq.system_instruction = { parts: [{ text: sysText }] };
-
-    return geminiReq;
+    const originalModel = parsed.model;
+    parsed.model = DEEPSEEK_VISION_MODEL;
+    prepareBackendOptions(parsed, true);
+    delete parsed.context_management;
+    return { originalModel, visionModel: DEEPSEEK_VISION_MODEL };
 }
 
-function geminiToAnthropic(geminiResp, originalModel) {
-    const candidate = geminiResp.candidates?.[0];
-    const text = candidate?.content?.parts?.map(p => p.text || '').join('') || '';
-    const finishReason = candidate?.finish_reason;
-    const stopReason = finishReason === 'STOP' ? 'end_turn'
-        : finishReason === 'MAX_TOKENS' ? 'max_tokens'
-        : finishReason === 'SAFETY' ? 'end_turn'
-        : 'end_turn';
+// Preserve native server tools and reasoning history. Only direct DeepSeek
+// accepts these reasoning controls under its current Anthropic contract.
+export function prepareBackendOptions(parsed, isDeepSeek) {
+    delete parsed.context_management;
+    if (!isDeepSeek) {
+        delete parsed.thinking;
+        return;
+    }
+    if (parsed.thinking) {
+        if (parsed.thinking.type === 'adaptive') parsed.thinking = { type: 'enabled' };
+        else delete parsed.thinking.budget_tokens;
+    }
+    if (parsed.output_config) {
+        const effort = parsed.output_config.effort;
+        const mapped = { minimal: 'low', low: 'low', medium: 'high', high: 'high', xhigh: 'high', max: 'max', ultra: 'max' }[effort];
+        if (mapped) parsed.output_config = { effort: mapped };
+        else delete parsed.output_config;
+    }
+}
 
-    const usageMeta = geminiResp.usage_metadata || {};
+// Approximation only, never a tokenizer. Include system and tool schemas, which
+// the old messages-only estimate omitted. UTF-8 bytes also cover non-Latin text.
+export function estimateInputTokens(parsed) {
+    const input = { system: parsed.system, tools: parsed.tools, messages: parsed.messages };
+    return Math.ceil(Buffer.byteLength(JSON.stringify(input), 'utf8') / 3);
+}
+
+/**
+ * Anthropic-compatible backends (DeepSeek, OpenRouter, ...) validate tool
+ * `input_schema` with Python-style regex, which rejects the Unicode property
+ * escapes (`\p{...}`) that Claude Code puts in `pattern` keywords — e.g. the
+ * Artifact tool — returning 400 "not a regex". Anthropic tolerates them.
+ * Strip `pattern`/`patternProperties` before forwarding so a strict validator
+ * never sees them. Returns true when anything was removed.
+ */
+export function sanitizeToolSchemasForBackend(parsed) {
+    let changed = false;
+    const walk = (node) => {
+        if (node === null || typeof node !== 'object') return;
+        for (const key of Object.keys(node)) {
+            if (key === 'pattern' || key === 'patternProperties') {
+                delete node[key];
+                changed = true;
+            } else if (node[key] !== null && typeof node[key] === 'object') {
+                walk(node[key]);
+            }
+        }
+    };
+    const tools = parsed?.tools;
+    if (Array.isArray(tools)) {
+        for (const tool of tools) {
+            if (tool && typeof tool?.input_schema === 'object') {
+                walk(tool.input_schema);
+            }
+        }
+    }
+    return changed;
+}
+
+/**
+ * Metadata-only context telemetry (Wave 1).
+ *
+ * These helpers compute per-request context metrics WITHOUT ever returning
+ * prompt text, schemas, headers, keys, arguments, or results. All outputs are
+ * counts, byte sizes, booleans, and the short model id string. They are pure:
+ * they never mutate their input.
+ */
+export const CONTEXT_WARN_TOOLS_COUNT = 100;
+export const CONTEXT_WARN_TOOLS_BYTES = 512 * 1024;
+
+function jsonBytes(value, fallback = 0) {
+    try {
+        return Buffer.byteLength(JSON.stringify(value));
+    } catch {
+        return fallback;
+    }
+}
+
+function sanitizeToken(value) {
+    if (typeof value !== 'string' || !value) return null;
+    const clean = value.replace(/[\r\n\t ]+/g, '_').slice(0, 120);
+    return clean || null;
+}
+
+function sanitizeModelId(model) {
+    return sanitizeToken(model) ?? '?';
+}
+
+export function computeContextMetrics(parsed, requestBytes) {
+    const tools = Array.isArray(parsed?.tools) ? parsed.tools : [];
+    const messages = Array.isArray(parsed?.messages) ? parsed.messages : [];
+
+    let imageCount = 0;
+    let toolReferenceCountInMessages = 0;
+    const scanBlock = (block) => {
+        if (!block || typeof block !== 'object') return;
+        if (block.type === 'image') imageCount++;
+        if (block.type === 'tool_reference') toolReferenceCountInMessages++;
+        if (block.type === 'tool_result' && Array.isArray(block.content)) {
+            for (const nested of block.content) scanBlock(nested);
+        }
+    };
+    for (const msg of messages) {
+        if (Array.isArray(msg?.content)) {
+            for (const block of msg.content) scanBlock(block);
+        }
+    }
+
+    // Deferred heuristic: a tool entry without a full `input_schema` object
+    // (or explicitly flagged) is a deferred placeholder, not an expanded schema.
+    let deferredToolsCount = 0;
+    let nonDeferredToolsCount = 0;
+    let hasToolSearchTool = false;
+    for (const tool of tools) {
+        if (tool && typeof tool === 'object' && tool.name === 'ToolSearch') {
+            hasToolSearchTool = true;
+        }
+        if (tool && typeof tool === 'object'
+            && (tool.deferred === true || tool.input_schema === undefined)) {
+            deferredToolsCount++;
+        } else {
+            nonDeferredToolsCount++;
+        }
+    }
+
     return {
-        id: 'msg_gemini_' + Date.now(),
-        type: 'message',
-        role: 'assistant',
-        model: originalModel || GEMINI_MODEL,
-        content: [{ type: 'text', text }],
-        stop_reason: stopReason,
-        stop_sequence: null,
-        usage: {
-            input_tokens: usageMeta.prompt_token_count || 0,
-            output_tokens: usageMeta.candidates_token_count || 0,
-        },
+        model: sanitizeModelId(parsed?.model),
+        requestBytes: Number.isFinite(requestBytes) ? requestBytes : -1,
+        toolsCount: tools.length,
+        toolsBytes: parsed && 'tools' in Object(parsed)
+            ? jsonBytes(parsed.tools, -1)
+            : 0,
+        systemBytes: parsed && parsed.system !== undefined
+            ? jsonBytes(parsed.system, -1)
+            : 0,
+        messagesBytes: parsed && 'messages' in Object(parsed)
+            ? jsonBytes(parsed.messages, -1)
+            : 0,
+        imageCount,
+        deferredToolsCount,
+        nonDeferredToolsCount,
+        hasToolSearchTool,
+        toolReferenceCountInMessages,
     };
 }
 
-function sendGeminiRequest(geminiReq, callback) {
-    const url = `${GEMINI_BASE_URL}/${GEMINI_MODEL}:generateContent`;
-    const parsedUrl = new URL(url);
-    const body = JSON.stringify(geminiReq);
+export function formatContextLine(reqId, mode, metrics) {
+    const m = metrics;
+    return `[context] req=${reqId} mode=${mode} model=${m.model} `
+        + `tools=${m.toolsCount} tools_bytes=${m.toolsBytes} `
+        + `request_bytes=${m.requestBytes} system_bytes=${m.systemBytes} `
+        + `messages_bytes=${m.messagesBytes} images=${m.imageCount} `
+        + `deferred=${m.deferredToolsCount} non_deferred=${m.nonDeferredToolsCount} `
+        + `tool_search=${m.hasToolSearchTool} tool_refs=${m.toolReferenceCountInMessages}`;
+}
 
-    const opts = {
-        hostname: parsedUrl.hostname,
-        port: 443,
-        path: parsedUrl.pathname,
-        method: 'POST',
-        headers: {
-            'content-type': 'application/json',
-            'x-goog-api-key': GEMINI_API_KEY,
-            'content-length': Buffer.byteLength(body),
-        },
+export function needsContextWarning(metrics) {
+    return metrics.toolsCount >= CONTEXT_WARN_TOOLS_COUNT
+        || metrics.toolsBytes >= CONTEXT_WARN_TOOLS_BYTES;
+}
+
+export function formatContextWarning(reqId, mode, metrics) {
+    return `[context-warning] LARGE TOOL CONTEXT req=${reqId} mode=${mode} `
+        + `model=${metrics.model} tools=${metrics.toolsCount} `
+        + `tools_bytes=${metrics.toolsBytes} request_bytes=${metrics.requestBytes}`;
+}
+
+/**
+ * Pick known token-counter fields out of an upstream `usage` object.
+ * Returns nulls (rendered as `na`) for absent fields — never fabricates zeros.
+ */
+export function extractUsageMetrics(usage) {
+    if (!usage || typeof usage !== 'object') {
+        return { inputTokens: null, outputTokens: null, cacheRead: null, cacheCreation: null };
+    }
+    const num = (v) => (Number.isFinite(v) ? v : null);
+    return {
+        inputTokens: num(usage.input_tokens),
+        outputTokens: num(usage.output_tokens),
+        cacheRead: num(usage.cache_read_input_tokens),
+        cacheCreation: num(usage.cache_creation_input_tokens),
     };
+}
 
-    const req = httpsRequest(opts, (res) => {
-        let data = '';
-        res.on('data', c => data += c);
-        res.on('end', () => {
+function fmtTokens(v) {
+    return v === null || v === undefined ? 'na' : String(v);
+}
+
+export function formatContextResponse(reqId, { status, responseBytes, inputTokens, outputTokens, cacheRead, cacheCreation, respMeta }) {
+    const rm = respMeta || {};
+    const blocks = Array.isArray(rm.blockTypes) && rm.blockTypes.length
+        ? rm.blockTypes.slice(0, 32).join(',')
+        : '-';
+    const toolUses = Array.isArray(rm.toolUseNames) && rm.toolUseNames.length
+        ? rm.toolUseNames.slice(0, 32).join(',')
+        : '-';
+    const serverTools = Array.isArray(rm.serverToolUseNames) && rm.serverToolUseNames.length
+        ? rm.serverToolUseNames.slice(0, 32).join(',')
+        : '-';
+    return `[context-resp] req=${reqId} status=${status} resp_bytes=${responseBytes} `
+        + `in=${fmtTokens(inputTokens)} out=${fmtTokens(outputTokens)} `
+        + `cache_read=${fmtTokens(cacheRead)} cache_create=${fmtTokens(cacheCreation)} `
+        + `blocks=${blocks} tool_uses=${toolUses} server_tools=${serverTools} `
+        + `ts_results=${rm.toolSearchResultCount ?? 0} tool_refs=${rm.toolReferenceCount ?? 0} `
+        + `stop=${rm.stopReason || '-'}`;
+}
+
+/**
+ * Metadata-only response-shape summary. From an Anthropic message object
+ * extracts block types, tool names, and protocol markers — never block text,
+ * arguments, or results. Pure: never mutates input.
+ */
+export function computeResponseMetadata(message) {
+    const meta = {
+        blockTypes: [],
+        toolUseNames: [],
+        serverToolUseNames: [],
+        toolSearchResultCount: 0,
+        toolReferenceCount: 0,
+        stopReason: sanitizeToken(message?.stop_reason),
+    };
+    const content = Array.isArray(message?.content) ? message.content : [];
+    for (const block of content) {
+        if (!block || typeof block !== 'object') continue;
+        const t = sanitizeToken(block.type);
+        if (!t) continue;
+        if (meta.blockTypes.length < 64) meta.blockTypes.push(t);
+        if (t === 'tool_use') {
+            const n = sanitizeToken(block.name);
+            if (n && meta.toolUseNames.length < 32) meta.toolUseNames.push(n);
+        } else if (t === 'server_tool_use') {
+            const n = sanitizeToken(block.name);
+            if (n && meta.serverToolUseNames.length < 32) meta.serverToolUseNames.push(n);
+        } else if (t === 'tool_search_tool_result') {
+            meta.toolSearchResultCount++;
+        } else if (t === 'tool_reference') {
+            meta.toolReferenceCount++;
+        }
+    }
+    return meta;
+}
+
+/**
+ * Graceful-shutdown signal wiring (Wave 2 fix).
+ *
+ * The launcher kills the proxy with SIGTERM the instant the client exits,
+ * which used to drop in-flight upstream responses before their telemetry
+ * flushed. Handlers are installed once per process; every live proxy
+ * registers its shutdown routine. Semantics: stop accepting new work, let
+ * in-flight upstream requests finish (bounded wait), then exit. No retries,
+ * no payload changes.
+ */
+const proxyShutdownRegistry = new Set();
+let proxySignalHandlersInstalled = false;
+
+function installProxySignalHandlers() {
+    if (proxySignalHandlersInstalled) return;
+    proxySignalHandlersInstalled = true;
+    const onSignal = (signal) => {
+        console.error(`[MODEL-PROXY] ${signal} received, draining in-flight requests`);
+        const pending = [...proxyShutdownRegistry].map((fn) => {
             try {
-                const parsed = JSON.parse(data);
-                callback(null, parsed, res.statusCode);
-            } catch (e) {
-                callback(e, null, res.statusCode);
+                return fn(2000);
+            } catch {
+                return Promise.resolve();
             }
         });
-    });
-    req.on('error', (e) => callback(e));
-    req.write(body);
-    req.end();
+        Promise.allSettled(pending).then(() => process.exit(0));
+        setTimeout(() => process.exit(0), 2500).unref?.();
+    };
+    process.once('SIGTERM', () => onSignal('SIGTERM'));
+    process.once('SIGINT', () => onSignal('SIGINT'));
 }
 
-// ---
+export function buildUpstreamPath(target, requestPath) {
+    const queryAt = requestPath.indexOf('?');
+    const pathname = queryAt === -1 ? requestPath : requestPath.slice(0, queryAt);
+    const query = queryAt === -1 ? '' : requestPath.slice(queryAt);
+    const base = target.pathname.replace(/\/$/, '');
+    let overlap = '';
+    for (let i = 1; i <= Math.min(base.length, pathname.length); i++) {
+        if (base.endsWith(pathname.substring(0, i))) {
+            overlap = pathname.substring(0, i);
+        }
+    }
+    const joined = overlap
+        ? base + pathname.substring(overlap.length)
+        : base + pathname;
+    return joined + query;
+}
 
-export function startModelProxy({ targetUrl, apiKey, startPort = 3200, backends, defaultMode }) {
+export function startModelProxy({
+    targetUrl,
+    apiKey,
+    startPort = 3200,
+    backends,
+    defaultMode,
+    modelOverride = null,
+    upstreamRequest = httpsRequest,
+    terminalGraceMs = 5_000,
+    semanticStallTimeoutMs = semanticStallTimeoutFromEnv(),
+    mockTitleGeneration = process.env.DEEPCLAUDE_MOCK_TITLE_GEN === '1',
+}) {
     return new Promise((resolve, reject) => {
+        // Launchers pass short backend aliases; use canonical names for model
+        // remapping, pricing, and reasoning controls as well as live switching.
+        defaultMode = { ds: 'deepseek', or: 'openrouter', op: 'openrouter', mm: 'minimax', fw: 'fireworks' }[defaultMode] || defaultMode;
         const initialTarget = new URL(targetUrl);
         const initialBearer = targetUrl.includes('openrouter') || targetUrl.includes('fireworks');
 
@@ -388,6 +766,11 @@ export function startModelProxy({ targetUrl, apiKey, startPort = 3200, backends,
                 };
             }
         }
+        const deepseekVisionBackend = allBackends.deepseek?.apiKey
+            ? allBackends.deepseek
+            : initialTarget.hostname.endsWith('deepseek.com') && apiKey
+                ? { target: initialTarget, apiKey, useBearer: false }
+                : null;
         const initialName = defaultMode || (backends ? 'anthropic' : null);
         const startBackend = initialName && initialName !== 'anthropic' && allBackends[initialName];
 
@@ -397,17 +780,22 @@ export function startModelProxy({ targetUrl, apiKey, startPort = 3200, backends,
             apiKey: startBackend ? startBackend.apiKey : apiKey,
             useBearer: startBackend ? startBackend.useBearer : initialBearer,
             hadNonAnthropicSession: !!startBackend,
+            modelOverride: defaultMode === 'openrouter' ? modelOverride : null,
         };
 
         let reqCount = 0;
         const t0Global = Date.now();
         const costs = {};
+        // In-flight upstream request tracking for graceful shutdown.
+        let inFlight = 0;
 
-        function recordUsage(backend, inputTokens, outputTokens) {
-            if (!costs[backend]) costs[backend] = { input: 0, output: 0, requests: 0 };
+        function recordUsage(backend, inputTokens, outputTokens, cacheRead = 0, cacheCreation = 0) {
+            if (!costs[backend]) costs[backend] = { input: 0, output: 0, requests: 0, cacheRead: 0, cacheCreation: 0 };
             costs[backend].input += inputTokens || 0;
             costs[backend].output += outputTokens || 0;
             costs[backend].requests++;
+            costs[backend].cacheRead += cacheRead || 0;
+            costs[backend].cacheCreation += cacheCreation || 0;
         }
 
         function getCostSummary() {
@@ -417,8 +805,10 @@ export function startModelProxy({ targetUrl, apiKey, startPort = 3200, backends,
             for (const [backend, tokens] of Object.entries(costs)) {
                 const p = PRICING_PER_M[backend] || PRICING_PER_M._single;
                 const ap = PRICING_PER_M.anthropic;
-                const actual = (tokens.input * p.input + tokens.output * p.output) / 1_000_000;
-                const anthropicEq = (tokens.input * ap.input + tokens.output * ap.output) / 1_000_000;
+                const actual = (tokens.input * p.input + tokens.output * p.output
+                    + tokens.cacheRead * (p.cacheRead ?? p.input)
+                    + tokens.cacheCreation * p.input) / 1_000_000;
+                const anthropicEq = ((tokens.input + tokens.cacheRead + tokens.cacheCreation) * ap.input + tokens.output * ap.output) / 1_000_000;
                 totalActual += actual;
                 totalAnthropic += anthropicEq;
                 summary[backend] = {
@@ -427,6 +817,11 @@ export function startModelProxy({ targetUrl, apiKey, startPort = 3200, backends,
                     requests: tokens.requests,
                     cost: +actual.toFixed(4),
                     anthropic_equivalent: +anthropicEq.toFixed(4),
+                    ...(p.cacheRead !== undefined ? {
+                        cache_read_input_tokens: tokens.cacheRead,
+                        cache_creation_input_tokens: tokens.cacheCreation,
+                        cost_basis: 'peak_token_estimate_excludes_search_fetch',
+                    } : {}),
                 };
             }
             return {
@@ -455,6 +850,7 @@ export function startModelProxy({ targetUrl, apiKey, startPort = 3200, backends,
             state.apiKey = b.apiKey;
             state.useBearer = b.useBearer;
             state.hadNonAnthropicSession = true;
+            state.modelOverride = name === 'openrouter' ? state.modelOverride : null;
             return { mode: name, previous: prev };
         }
 
@@ -521,22 +917,45 @@ export function startModelProxy({ targetUrl, apiKey, startPort = 3200, backends,
                 return;
             }
 
-            // Count tokens mock — answer locally instead of forwarding to
-            // backends that lack this endpoint. Approximate: ~4 chars per token
-            // for English text, which is conservative but avoids upstream 404s.
+            // These are different API contracts, not Messages. Never send a
+            // DeepSeek/OpenAI payload to Anthropic under the fallback route.
+            if (state.mode !== 'anthropic' && /^(?:\/beta)?(?:\/v1)?\/(?:responses|chat\/completions|completions|tools\/(?:search|fetch))(?:\/|$)/.test(urlPath)) {
+                clientRes.writeHead(501, { 'content-type': 'application/json' });
+                clientRes.end(JSON.stringify({ type: 'error', error: { type: 'invalid_request_error',
+                    message: 'This proxy supports Anthropic Messages, not this API family. Call the documented DeepSeek endpoint directly.' } }));
+                clientReq.resume();
+                return;
+            }
+            const routeDeepSeekFiles = /^\/v1\/files(?:\/[^/]+)?$/.test(urlPath)
+                && state.mode !== 'anthropic'
+                && (state.mode === 'deepseek' || state.target.hostname === 'api.deepseek.com');
+
+            // Local estimate for backends without a count_tokens endpoint.
+            // Includes system/tools, but is not a substitute for a tokenizer.
             if (urlPath === '/v1/messages/count_tokens' && clientReq.method === 'POST') {
                 const chunks = [];
-                clientReq.on('data', c => chunks.push(c));
+                let bytes = 0;
+                clientReq.on('data', c => {
+                    bytes += c.length;
+                    if (bytes > MAX_BODY_SIZE) {
+                        if (!clientRes.writableEnded) {
+                            clientRes.writeHead(413, { 'content-type': 'application/json' });
+                            clientRes.end(JSON.stringify({ type: 'error', error: { type: 'invalid_request_error', message: 'Token count body exceeds 48 MiB' } }));
+                        }
+                        return;
+                    }
+                    chunks.push(c);
+                });
                 clientReq.on('end', () => {
+                    if (clientRes.writableEnded) return;
                     try {
                         const body = JSON.parse(Buffer.concat(chunks).toString());
-                        const text = JSON.stringify(body.messages || body);
-                        const approx = Math.ceil(text.length / 4);
+                        const approx = estimateInputTokens(body);
                         clientRes.writeHead(200, { 'content-type': 'application/json' });
                         clientRes.end(JSON.stringify({ input_tokens: approx }));
                     } catch {
-                        clientRes.writeHead(200, { 'content-type': 'application/json' });
-                        clientRes.end(JSON.stringify({ input_tokens: 0 }));
+                        clientRes.writeHead(400, { 'content-type': 'application/json' });
+                        clientRes.end(JSON.stringify({ type: 'error', error: { type: 'invalid_request_error', message: 'Invalid JSON for token count request' } }));
                     }
                 });
                 return;
@@ -550,19 +969,22 @@ export function startModelProxy({ targetUrl, apiKey, startPort = 3200, backends,
 
             const chunks = [];
             let bodySize = 0;
+            const bodyLimit = routeDeepSeekFiles ? MAX_FILES_BODY_SIZE : MAX_BODY_SIZE;
             clientReq.on('data', c => {
                 bodySize += c.length;
-                if (bodySize > MAX_BODY_SIZE) {
+                if (bodySize > bodyLimit) {
+                    if (clientRes.writableEnded) return;
                     console.error(`[MODEL-PROXY] #${reqId} BODY_TOO_LARGE (${bodySize} bytes)`);
                     clientRes.writeHead(413, { 'content-type': 'application/json' });
-                    clientRes.end(JSON.stringify({ error: { message: 'Request body too large' } }));
-                    clientReq.destroy();
+                    clientRes.end(JSON.stringify({ error: { message: routeDeepSeekFiles
+                        ? 'Files upload exceeds local limit of 65 MiB including multipart envelope'
+                        : 'Request body exceeds DeepSeek limit of 48 MiB' } }));
                     return;
                 }
                 chunks.push(c);
             });
             clientReq.on('end', () => {
-                if (bodySize > MAX_BODY_SIZE) return;
+                if (bodySize > bodyLimit) return;
                 let body = Buffer.concat(chunks);
                 const isMessagesPath = MODEL_PATHS.includes(urlPath);
 
@@ -571,126 +993,70 @@ export function startModelProxy({ targetUrl, apiKey, startPort = 3200, backends,
                     try { parsed = JSON.parse(body); } catch {}
                 }
 
-                // --- Image fallback detection ---
-                // Only the latest message triggers the reroute (a fresh
-                // attachment or a Read tool_result that just came back).
-                // Stale images in older history are stripped below so the
-                // conversation can return to the backend on text-only
-                // follow-ups instead of silently pinning to the fallback.
+                // Only a fresh image in the latest user message triggers
+                // DeepSeek Vision. Older images are stripped on later text
+                // turns so the conversation returns to the main code model.
                 const lastMsg = parsed?.messages?.[parsed.messages.length - 1];
-                const hasImage = (
-                    IMAGE_FALLBACK_ENABLED &&
-                    state.mode !== 'anthropic' &&
-                    !!lastMsg &&
-                    containsImageBlock([lastMsg])
-                );
+                const lastMessageHasImage = lastMsg?.role === 'user'
+                    && containsImageBlock([lastMsg]);
+                const hasImage = state.mode !== 'anthropic'
+                    && state.mode !== 'minimax'
+                    && !!deepseekVisionBackend
+                    && lastMessageHasImage;
 
                 const isAnthropicMode = state.mode === 'anthropic';
                 const isModelCall = !isAnthropicMode && isMessagesPath;
 
-                // When routing image to fallback provider, swap model names
-                // on the wire so the provider sees a model it recognizes,
-                // then swap back on the response so Claude Code doesn't notice.
+                if (isModelCall && lastMessageHasImage && state.mode !== 'minimax' && !deepseekVisionBackend) {
+                    console.error(`[MODEL-PROXY] #${reqId} image rejected: DEEPSEEK_API_KEY is not available for native vision routing`);
+                    clientRes.writeHead(503, { 'content-type': 'application/json' });
+                    clientRes.end(JSON.stringify({
+                        error: {
+                            message: 'Image input requires DEEPSEEK_API_KEY for deepseek-flash',
+                        },
+                    }));
+                    return;
+                }
+
+                // The wire uses DeepSeek's vision model while the response is
+                // rewritten to the model name Claude Code originally sent.
                 let imageRewrite = null;
                 let effectiveMode = state.mode;
                 let dest, fullPath, headers;
 
                 if (hasImage) {
-                    if (IMAGE_FALLBACK === 'openrouter') {
-                        // Route image to OpenRouter with a vision-capable model
-                        const orKey = process.env.OPENROUTER_API_KEY;
-                        if (!orKey) {
-                            console.error(`[MODEL-PROXY] #${reqId} image fallback: OPENROUTER_API_KEY not set, using Anthropic`);
-                            dest = new URL(ANTHROPIC_FALLBACK);
-                            headers = { ...clientReq.headers, host: dest.host };
-                            delete headers['content-length'];
-                            effectiveMode = 'anthropic_max';
-                        } else {
-                            dest = new URL('https://openrouter.ai/api/v1');
-                            headers = { ...clientReq.headers, host: dest.host };
-                            delete headers['content-length'];
-                            delete headers['authorization'];
-                            delete headers['x-api-key'];
-                            headers['authorization'] = `Bearer ${orKey}`;
-                            if (parsed?.model) {
-                                imageRewrite = { backend: parsed.model, canonical: IMAGE_FALLBACK_MODEL };
-                                parsed.model = IMAGE_FALLBACK_MODEL;
-                            }
-                            effectiveMode = 'image_fallback';
-                        }
-                    } else if (IMAGE_FALLBACK === 'gemini') {
-                        // Route image to Gemini directly via Google AI Studio
-                        if (!GEMINI_API_KEY) {
-                            console.error(`[MODEL-PROXY] #${reqId} image fallback: GEMINI_API_KEY not set, using Anthropic`);
-                            dest = new URL(ANTHROPIC_FALLBACK);
-                            headers = { ...clientReq.headers, host: dest.host };
-                            delete headers['content-length'];
-                            effectiveMode = 'anthropic_max';
-                        } else {
-                            console.error(`[MODEL-PROXY] #${reqId} [image→gemini ${GEMINI_MODEL}]`);
-                            const geminiReq = anthropicToGemini(parsed);
-                            sendGeminiRequest(geminiReq, (err, geminiResp, status) => {
-                                if (err) {
-                                    console.error(`[MODEL-PROXY] #${reqId} Gemini error:`, err.message);
-                                    clientRes.writeHead(502, { 'content-type': 'application/json' });
-                                    clientRes.end(JSON.stringify({ error: { message: 'Gemini vision request failed: ' + err.message } }));
-                                    return;
-                                }
-                                if (status !== 200 || !geminiResp?.candidates?.length) {
-                                    const errText = geminiResp?.error?.message || `HTTP ${status}`;
-                                    console.error(`[MODEL-PROXY] #${reqId} Gemini API error: ${errText}`);
-                                    clientRes.writeHead(502, { 'content-type': 'application/json' });
-                                    clientRes.end(JSON.stringify({ error: { message: 'Gemini vision error: ' + errText } }));
-                                    return;
-                                }
-                                const anthropicResp = geminiToAnthropic(geminiResp, parsed.model);
-                                // Track usage for cost calculation
-                                const usage = anthropicResp.usage || {};
-                                recordUsage('gemini', usage.input_tokens || 0, usage.output_tokens || 0);
-                                console.error(`[MODEL-PROXY] #${reqId} Gemini done in ${((Date.now() - t0) / 1000).toFixed(1)}s (in=${usage.input_tokens} out=${usage.output_tokens})`);
-                                clientRes.writeHead(200, { 'content-type': 'application/json' });
-                                clientRes.end(JSON.stringify(anthropicResp));
-                            });
-                            return; // Async — skip normal proxy flow
-                        }
-                    } else {
-                        // IMAGE_FALLBACK === 'anthropic' (default): route
-                        // to api.anthropic.com using existing Claude Code auth
-                        dest = new URL(ANTHROPIC_FALLBACK);
-                        headers = { ...clientReq.headers, host: dest.host };
-                        delete headers['content-length'];
-                        effectiveMode = 'anthropic_max';
+                    let prepared;
+                    try {
+                        prepared = prepareDeepSeekVisionRequest(parsed);
+                    } catch (error) {
+                        const message = error instanceof Error ? error.message : 'invalid image input';
+                        console.error(`[MODEL-PROXY] #${reqId} image rejected: ${message}`);
+                        clientRes.writeHead(400, { 'content-type': 'application/json' });
+                        clientRes.end(JSON.stringify({ error: { message } }));
+                        return;
                     }
-
-                    // Swap model to canonical Claude name for Anthropic
-                    if (effectiveMode === 'anthropic_max' && parsed?.model) {
-                        const canonical = REVERSE_MODEL_REMAP[state.mode]?.[parsed.model];
-                        if (canonical) {
-                            imageRewrite = { backend: parsed.model, canonical };
-                            parsed.model = canonical;
-                        }
-                    }
-
-                    // Drop thinking config on image reroute — Anthropic 400s
-                    // with clear_thinking strategies if thinking isn't enabled.
-                    delete parsed.thinking;
-                    delete parsed.context_management;
-
+                    sanitizeToolSchemasForBackend(parsed);
+                    imageRewrite = prepared?.originalModel
+                        ? { backend: prepared.originalModel, canonical: prepared.visionModel }
+                        : null;
+                    dest = deepseekVisionBackend.target;
+                    headers = { ...clientReq.headers, host: dest.host };
+                    delete headers['content-length'];
+                    delete headers['authorization'];
+                    delete headers['x-api-key'];
+                    headers['anthropic-beta'] = withFilesBeta(headers['anthropic-beta']);
+                    headers['x-api-key'] = deepseekVisionBackend.apiKey;
+                    effectiveMode = 'deepseek_vision';
                     body = Buffer.from(JSON.stringify(parsed));
-                    fullPath = '/v1/messages';
-                    console.error(`[MODEL-PROXY] #${reqId} [image→${effectiveMode}${imageRewrite ? `, ${imageRewrite.backend}→${imageRewrite.canonical}` : ''}]`);
+                    fullPath = buildUpstreamPath(dest, clientReq.url);
+                    console.error(`[MODEL-PROXY] #${reqId} [image→${DEEPSEEK_VISION_MODEL}]`);
                 } else {
                     // Normal routing
-                    dest = isModelCall ? state.target : new URL(ANTHROPIC_FALLBACK);
+                    dest = isModelCall || routeDeepSeekFiles ? state.target : new URL(ANTHROPIC_FALLBACK);
 
                     let fullPathBase;
-                    if (isModelCall) {
-                        const base = state.target.pathname.replace(/\/$/, '');
-                        let overlap = '';
-                        for (let i = 1; i <= Math.min(base.length, urlPath.length); i++) {
-                            if (base.endsWith(urlPath.substring(0, i))) overlap = urlPath.substring(0, i);
-                        }
-                        fullPathBase = overlap ? base + urlPath.substring(overlap.length) : base + urlPath;
+                    if (isModelCall || routeDeepSeekFiles) {
+                        fullPathBase = buildUpstreamPath(state.target, clientReq.url);
                     } else {
                         fullPathBase = clientReq.url;
                     }
@@ -699,7 +1065,7 @@ export function startModelProxy({ targetUrl, apiKey, startPort = 3200, backends,
                     headers = { ...clientReq.headers, host: dest.host };
                     delete headers['content-length'];
 
-                    if (isModelCall) {
+                    if (isModelCall || routeDeepSeekFiles) {
                         delete headers['authorization'];
                         delete headers['x-api-key'];
                         if (state.useBearer) {
@@ -707,12 +1073,13 @@ export function startModelProxy({ targetUrl, apiKey, startPort = 3200, backends,
                         } else {
                             headers['x-api-key'] = state.apiKey;
                         }
+                        if (routeDeepSeekFiles) headers['anthropic-beta'] = withFilesBeta(headers['anthropic-beta']);
                     }
 
                     // Strip stale images from message history so a single
                     // image turn doesn't pin the rest of the conversation to
                     // the fallback provider.
-                    if (isModelCall && parsed?.['messages']) {
+                    if (isModelCall && parsed?.['messages'] && !lastMessageHasImage) {
                         const stripped = stripImagesFromMessages(parsed.messages);
                         if (stripped > 0) {
                             console.error(`[MODEL-PROXY] #${reqId} stripped ${stripped} stale image(s) from history`);
@@ -727,7 +1094,7 @@ export function startModelProxy({ targetUrl, apiKey, startPort = 3200, backends,
                 }
 
                 // Telemetry mock: intercept title-generation
-                if (trackUsage) {
+                if (trackUsage && mockTitleGeneration) {
                     try {
                         const p = JSON.parse(body);
                         if (isTitleGenRequest(p)) {
@@ -741,18 +1108,23 @@ export function startModelProxy({ targetUrl, apiKey, startPort = 3200, backends,
                 }
 
                 // Remap Anthropic model names to backend-specific names
-                if (isModelCall && MODEL_REMAP[state.mode]) {
+                if (isModelCall && !hasImage && (state.modelOverride || MODEL_REMAP[state.mode])) {
                     try {
                         const p = JSON.parse(body);
+                        let mapped;
+                        if (state.modelOverride && state.mode === 'openrouter') {
+                            mapped = state.modelOverride;
+                            console.error(`[MODEL-PROXY] #${reqId} custom model: ${p.model} → ${mapped}`);
+                        }
                         const remap = MODEL_REMAP[state.mode];
-                        let mapped = remap[p.model];
+                        if (!mapped && remap) mapped = remap[p.model];
                         if (!mapped) {
                             const tier = p.model.includes('fable') ? 'fable'
                                 : p.model.includes('opus') ? 'opus'
                                 : p.model.includes('sonnet') ? 'sonnet'
                                 : p.model.includes('haiku') ? 'haiku'
                                 : null;
-                            if (remap._default && tier) {
+                            if (remap?._default && tier) {
                                 mapped = remap._default[tier];
                                 console.error(`[MODEL-PROXY] #${reqId} model fallback: ${p.model} → ${mapped} (tier=${tier})`);
                             } else {
@@ -763,6 +1135,18 @@ export function startModelProxy({ targetUrl, apiKey, startPort = 3200, backends,
                         }
                         if (mapped) {
                             p.model = mapped;
+                            body = Buffer.from(JSON.stringify(p));
+                        }
+                    } catch { /* pass through */ }
+                }
+
+                // Strict backend schema validators reject the Unicode property
+                // escapes in Claude Code tool `pattern` keywords; drop them for
+                // every non-Anthropic model call (see sanitizeToolSchemasForBackend).
+                if (isModelCall) {
+                    try {
+                        const p = JSON.parse(body);
+                        if (sanitizeToolSchemasForBackend(p)) {
                             body = Buffer.from(JSON.stringify(p));
                         }
                     } catch { /* pass through */ }
@@ -783,17 +1167,16 @@ export function startModelProxy({ targetUrl, apiKey, startPort = 3200, backends,
                 if (isModelCall) {
                     try {
                         const p = JSON.parse(body);
-                        delete p.thinking;
-                        delete p.context_management;
+                        prepareBackendOptions(p, dest.hostname === 'api.deepseek.com' || state.mode === 'deepseek' || hasImage);
                         body = Buffer.from(JSON.stringify(p));
                     } catch { /* pass through */ }
                 }
 
-                // Strip accept-encoding when the body was mutated (image
-                // fallback swaps model names in the response), otherwise
-                // the upstream may gzip and we can't rewrite.
+                // The proxy inspects and normalizes model responses. Request
+                // identity encoding for every tracked model call so JSON/SSE
+                // parsers never receive compressed bytes without a decoder.
                 const finalHeaders = { ...headers, 'content-length': body.length };
-                if (hasImage) {
+                if (trackUsage) {
                     delete finalHeaders['accept-encoding'];
                 }
 
@@ -803,13 +1186,29 @@ export function startModelProxy({ targetUrl, apiKey, startPort = 3200, backends,
                     path: fullPath,
                     method: clientReq.method,
                     headers: finalHeaders,
-                    timeout: REQUEST_TIMEOUT_MS,
+                    timeout: routeDeepSeekFiles ? 10 * 60 * 1000 : REQUEST_TIMEOUT_MS,
                 };
 
-                const proxyReq = httpsRequest(opts, (proxyRes) => {
+                let downstreamDisconnected = false;
+                let upstreamResponse = null;
+                const cancelUpstream = () => {
+                    if (clientRes.writableEnded) return;
+                    downstreamDisconnected = true;
+                    upstreamResponse?.destroy();
+                    proxyReq.destroy();
+                };
+
+                clientReq.once('aborted', cancelUpstream);
+                clientRes.once('close', cancelUpstream);
+
+                const proxyReq = upstreamRequest(opts, (proxyRes) => {
+                    upstreamResponse = proxyRes;
                     if (trackUsage) {
                         const ttfb = Date.now() - t0;
                         console.error(`[MODEL-PROXY] #${reqId} TTFB ${ttfb}ms (status ${proxyRes.statusCode})`);
+                        if (proxyRes.statusCode >= 400) {
+                            console.error(`[MODEL-PROXY] #${reqId} UPSTREAM_HTTP_ERROR status=${proxyRes.statusCode}`);
+                        }
                     }
 
                     const ct = proxyRes.headers['content-type'] || '';
@@ -832,41 +1231,183 @@ export function startModelProxy({ targetUrl, apiKey, startPort = 3200, backends,
                     if (trackUsage && isSSE) {
                         // Strip content-encoding when body is mutated
                         // (image fallback rewrites model names in-stream).
-                        const sseHeaders = hasImage
-                            ? (() => { const { 'content-encoding': _ce, ...h } = proxyRes.headers; return h; })()
-                            : proxyRes.headers;
+                        const sseHeaders = { ...proxyRes.headers };
+                        // Usage normalization and model rewrites can change the
+                        // byte length on every Messages stream, not just vision.
+                        delete sseHeaders['content-length'];
+                        delete sseHeaders['content-encoding'];
                         clientRes.writeHead(proxyRes.statusCode, sseHeaders);
                         const modelRewrite = imageRewrite
                             ? { from: imageRewrite.canonical, to: imageRewrite.backend }
                             : null;
-                        const norm = new UsageNormalizer(
-                            (inp, out) => recordUsage(effectiveMode, inp, out),
-                            { modelRewrite },
+                        let terminalTimer = null;
+                        let semanticStallTimer = null;
+                        let semanticFinished = false;
+                        let terminalIntentReceived = false;
+                        const openContentBlocks = new Set();
+                        let norm;
+
+                        const finishSemanticStream = (synthesizeMessageStop) => {
+                            if (semanticFinished) return;
+                            semanticFinished = true;
+                            clearTimeout(terminalTimer);
+                            clearTimeout(semanticStallTimer);
+                            proxyRes.unpipe(norm);
+                            if (synthesizeMessageStop) {
+                                console.error(`[MODEL-PROXY] #${reqId} synthesized missing message_stop`);
+                                norm.write('event: message_stop\ndata: {"type":"message_stop"}\n\n');
+                            }
+                            norm.end();
+                            logSseResp();
+                            proxyRes.destroy();
+                        };
+
+                        const failStalledSemanticStream = () => {
+                            if (semanticFinished) return;
+                            semanticFinished = true;
+                            clearTimeout(terminalTimer);
+                            clearTimeout(semanticStallTimer);
+                            proxyRes.unpipe(norm);
+                            const message = `Upstream generation stalled: no semantic SSE events for ${semanticStallTimeoutMs}ms`;
+                            console.error(`[MODEL-PROXY] #${reqId} ${message}`);
+                            norm.write(`event: error\ndata: ${JSON.stringify({
+                                type: 'error',
+                                error: { type: 'api_error', message },
+                            })}\n\n`);
+                            norm.end();
+                            proxyRes.destroy();
+                        };
+
+                        const refreshSemanticWatchdog = () => {
+                            if (semanticFinished || semanticStallTimeoutMs <= 0) return;
+                            clearTimeout(semanticStallTimer);
+                            semanticStallTimer = setTimeout(
+                                failStalledSemanticStream,
+                                semanticStallTimeoutMs,
+                            );
+                            semanticStallTimer.unref?.();
+                        };
+
+                        const scheduleMissingStopFallback = () => {
+                            if (!terminalIntentReceived || openContentBlocks.size > 0) return;
+                            clearTimeout(terminalTimer);
+                            terminalTimer = setTimeout(
+                                () => finishSemanticStream(true),
+                                terminalGraceMs,
+                            );
+                            terminalTimer.unref?.();
+                        };
+
+                        // Clean SSE completion destroys the upstream socket
+                        // (message_stop path), so 'end' may never fire. Log the
+                        // response metadata exactly once, from whichever
+                        // terminal path runs first.
+                        let respLogged = false;
+                        const logSseResp = () => {
+                            if (respLogged || !norm) return;
+                            respLogged = true;
+                            console.error(formatContextResponse(reqId, {
+                                status: proxyRes.statusCode,
+                                responseBytes: norm._respBytes,
+                                inputTokens: norm._sawInputUsage ? norm._inputTokens : null,
+                                outputTokens: norm._sawOutputUsage ? norm._outputTokens : null,
+                                cacheRead: norm._cacheRead,
+                                cacheCreation: norm._cacheCreation,
+                                respMeta: norm._respMeta,
+                            }));
+                        };
+
+                        norm = new UsageNormalizer(
+                            (inp, out, cacheRead, cacheCreation) => recordUsage(effectiveMode, inp, out, cacheRead, cacheCreation),
+                            {
+                                modelRewrite,
+                                onParseError(err, eventSize) {
+                                    console.error(`[MODEL-PROXY] #${reqId} SSE_JSON_PARSE_ERROR bytes=${eventSize}: ${err.message}`);
+                                },
+                                onSemanticEvent(event) {
+                                    // Anthropic ping events and DeepSeek's
+                                    // comment keep-alives prove only that the
+                                    // socket is alive, not that generation is
+                                    // making progress.
+                                    if (event.type !== 'ping') refreshSemanticWatchdog();
+                                    if (event.type === 'content_block_start') {
+                                        openContentBlocks.add(event.index);
+                                        return;
+                                    }
+                                    if (event.type === 'content_block_stop') {
+                                        openContentBlocks.delete(event.index);
+                                        scheduleMissingStopFallback();
+                                        return;
+                                    }
+                                    if (event.type === 'message_stop') {
+                                        finishSemanticStream(false);
+                                        return;
+                                    }
+                                    if (event.type === 'message_delta' && event.delta?.stop_reason) {
+                                        terminalIntentReceived = true;
+                                        scheduleMissingStopFallback();
+                                    }
+                                },
+                            },
                         );
                         proxyRes.pipe(norm).pipe(clientRes);
+                        refreshSemanticWatchdog();
+                        clientRes.once('close', () => {
+                            semanticFinished = true;
+                            clearTimeout(terminalTimer);
+                            clearTimeout(semanticStallTimer);
+                        });
                         proxyRes.on('end', () => {
+                            clearTimeout(terminalTimer);
+                            clearTimeout(semanticStallTimer);
+                            semanticFinished = true;
                             console.error(`[MODEL-PROXY] #${reqId} done in ${((Date.now() - t0) / 1000).toFixed(1)}s (${norm._inputTokens}in/${norm._outputTokens}out)`);
+                            logSseResp();
                         });
                     } else if (trackUsage && ct.includes('application/json')) {
                         const respChunks = [];
                         proxyRes.on('data', c => respChunks.push(c));
                         proxyRes.on('end', () => {
                             const raw = Buffer.concat(respChunks);
+                            let claimedUsage = null;
+                            try {
+                                const rawJson = JSON.parse(raw.toString());
+                                if (rawJson && typeof rawJson.usage === 'object' && rawJson.usage) {
+                                    claimedUsage = rawJson.usage;
+                                }
+                            } catch { /* presence check only */ }
                             let fixed = normalizeJsonBody(raw);
+                            let respMeta = null;
                             try {
                                 const j = JSON.parse(fixed);
-                                if (j.usage) recordUsage(effectiveMode, j.usage.input_tokens, j.usage.output_tokens);
+                                if (j.usage) recordUsage(effectiveMode, j.usage.input_tokens, j.usage.output_tokens, j.usage.cache_read_input_tokens, j.usage.cache_creation_input_tokens);
                                 if (imageRewrite && j.model === imageRewrite.canonical) {
                                     j.model = imageRewrite.backend;
                                     fixed = Buffer.from(JSON.stringify(j));
                                 }
-                            } catch {}
-                            const jsonHeaders = hasImage
-                                ? (() => { const { 'content-encoding': _ce2, ...h } = proxyRes.headers; return h; })()
-                                : proxyRes.headers;
+                                respMeta = computeResponseMetadata(j);
+                            } catch (err) {
+                                console.error(`[MODEL-PROXY] #${reqId} JSON_RESPONSE_PARSE_ERROR status=${proxyRes.statusCode} bytes=${fixed.length}: ${err.message}`);
+                            }
+                            const jsonHeaders = { ...proxyRes.headers };
+                            // The body was buffered and may have been
+                            // rewritten, so the upstream transfer framing is
+                            // no longer valid alongside our content-length.
+                            delete jsonHeaders['transfer-encoding'];
+                            delete jsonHeaders['content-encoding'];
                             const outHeaders = { ...jsonHeaders, 'content-length': fixed.length };
                             clientRes.writeHead(proxyRes.statusCode, outHeaders);
                             clientRes.end(fixed);
+                            const um = extractUsageMetrics(claimedUsage);
+                            console.error(formatContextResponse(reqId, {
+                                status: proxyRes.statusCode,
+                                responseBytes: fixed.length,
+                                inputTokens: um.inputTokens,
+                                outputTokens: um.outputTokens,
+                                cacheRead: um.cacheRead,
+                                cacheCreation: um.cacheCreation,
+                                respMeta,
+                            }));
                             console.error(`[MODEL-PROXY] #${reqId} done in ${((Date.now() - t0) / 1000).toFixed(1)}s (json, ${fixed.length}b)`);
                         });
                     } else {
@@ -887,6 +1428,7 @@ export function startModelProxy({ targetUrl, apiKey, startPort = 3200, backends,
                 });
 
                 proxyReq.on('error', (err) => {
+                    if (downstreamDisconnected) return;
                     const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
                     console.error(`[MODEL-PROXY] #${reqId} ERROR after ${elapsed}s: ${err.message}`);
                     if (!clientRes.headersSent) {
@@ -901,6 +1443,25 @@ export function startModelProxy({ targetUrl, apiKey, startPort = 3200, backends,
                     }
                 });
 
+                // Metadata-only context telemetry: sizes and counts, never content.
+                // Computed from the final (post-transform) body so the numbers
+                // describe exactly what goes upstream. Pure function — the
+                // request itself is untouched.
+                if (trackUsage) {
+                    try {
+                        const finalParsed = JSON.parse(body.toString());
+                        const ctx = computeContextMetrics(finalParsed, body.length);
+                        console.error(formatContextLine(reqId, effectiveMode, ctx));
+                        if (needsContextWarning(ctx)) {
+                            console.error(formatContextWarning(reqId, effectiveMode, ctx));
+                        }
+                    } catch { /* telemetry must never break proxying */ }
+                }
+
+                inFlight++;
+                proxyReq.once('close', () => {
+                    inFlight = Math.max(0, inFlight - 1);
+                });
                 proxyReq.end(body);
             });
         });
@@ -916,7 +1477,28 @@ export function startModelProxy({ targetUrl, apiKey, startPort = 3200, backends,
             server.listen(port, '127.0.0.1', () => {
                 const actualPort = server.address().port;
                 console.error(`[MODEL-PROXY] Listening on 127.0.0.1:${actualPort} → ${targetUrl} (mode: ${state.mode})`);
-                resolve({ port: actualPort, close: () => server.close(), switchMode });
+                const gracefulShutdown = (timeoutMs = 2000) => new Promise((res) => {
+                    server.close();
+                    const t0 = Date.now();
+                    const tick = () => {
+                        if (inFlight <= 0 || Date.now() - t0 >= timeoutMs) {
+                            server.closeAllConnections?.();
+                            res();
+                        } else {
+                            setTimeout(tick, 25);
+                        }
+                    };
+                    tick();
+                });
+                proxyShutdownRegistry.add(gracefulShutdown);
+                installProxySignalHandlers();
+                resolve({
+                    port: actualPort,
+                    close: () => server.close(),
+                    switchMode,
+                    gracefulShutdown,
+                    getInFlightCount: () => inFlight,
+                });
             });
         }
 

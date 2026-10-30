@@ -1,0 +1,16 @@
+{
+  "name": "deepclaude-community",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test proxy/*.test.js",
+    "refactor:setup": "node .agents/skills/surgical-refactor/scripts/bootstrap.mjs",
+    "refactor:inventory": "node .agents/skills/surgical-refactor/scripts/refactor.mjs inventory",
+    "refactor:baseline": "node .agents/skills/surgical-refactor/scripts/refactor.mjs baseline",
+    "refactor:analyze": "node .agents/skills/surgical-refactor/scripts/refactor.mjs analyze",
+    "refactor:verify": "node .agents/skills/surgical-refactor/scripts/refactor.mjs verify",
+    "refactor:guard": "node .agents/skills/surgical-refactor/scripts/refactor.mjs guard",
+    "refactor:mutation": "node .agents/skills/surgical-refactor/scripts/refactor.mjs mutation",
+    "refactor:selftest": "node --test .agents/skills/surgical-refactor/tests/*.test.mjs"
+  }
+}
